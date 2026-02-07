@@ -1,0 +1,83 @@
+struct PushConstants {
+    uint32_t vbo_handle;
+    uint32_t ibo_handle;
+    uint32_t scene_handle;
+    uint32_t object_handle;
+    uint32_t light_handle;
+    uint32_t material_handle;
+    uint32_t material;
+    uint32_t swapchain_write_texture_handle;
+};
+
+struct VertexData {
+    float4 position : POSITION;
+    float4 texcoord : TEXCOORD0;
+    float4 normal : NORMAL0;
+};
+
+struct Scene {
+    float4 camera_position;
+    float4x4 projection;
+    float4x4 view;
+};
+
+struct Object {
+    float4x4 model;
+
+};
+
+struct Material {
+    uint32_t albedo_handle;
+    uint32_t shadow_handle;
+    float metallic;
+    float roughness;
+    float ao;
+    uint32_t pad;
+    uint32_t pad1;
+};
+
+struct Light {
+    float4 position;
+    float4 color;
+};
+
+[vk::push_constant] ConstantBuffer<PushConstants> constants;
+[vk::binding(0, 0)] StructuredBuffer<VertexData> vertex_buffers[];
+[vk::binding(0, 0)] StructuredBuffer<uint> index_buffers[];
+[vk::binding(0, 0)] StructuredBuffer<Scene> typed_scene[];
+[vk::binding(0, 0)] StructuredBuffer<Object> typed_object[];
+[vk::binding(0, 0)] StructuredBuffer<Light> typed_light[];
+[vk::binding(0, 0)] StructuredBuffer<Material> typed_material[];
+[vk::binding(0, 1)] Sampler2D textures_2d[];
+
+Scene get_scene() {
+    return typed_scene[constants.scene_handle][0];
+}
+
+Scene get_light_scene() {
+    return typed_scene[constants.scene_handle][1];
+}
+
+Object get_object(uint32_t index) {
+    return typed_object[constants.object_handle][index];
+}
+
+uint32_t get_index(uint32_t vertex_id) {
+    return constants.ibo_handle == 4294967295 ? vertex_id : index_buffers[constants.ibo_handle][vertex_id];
+}
+
+VertexData get_vertex(uint32_t vertex_id) {
+    return vertex_buffers[constants.vbo_handle][vertex_id];
+}
+
+Sampler2D get_texture_2d(uint32_t texture_handle) {
+    return textures_2d[texture_handle];
+}
+
+Light get_light(uint32_t index) {
+    return typed_light[constants.light_handle][index];
+}
+
+Material get_material() {
+    return typed_material[constants.material_handle][constants.material];
+}

@@ -1,0 +1,14 @@
+# Xmake cache
+.xmake/
+build/
+
+# MacOS Cache
+.DS_Store
+
+
+compile_commands.json
+.vscode/compile_commands.json
+src/*.slang.spv
+src/*.slang.h
+.cache/
+output/
