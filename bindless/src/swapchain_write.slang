@@ -20,6 +20,11 @@ VertexOutput vertex_main(uint vertex_id: SV_VertexID, uint draw_id: SV_VulkanIns
 [shader("fragment")]
 FragmentOutput fragment_main(VertexOutput input) {
     FragmentOutput output;
-    output.color = float4(get_texture_2d(constants.swapchain_write_texture_handle).Sample(input.texcoord.xy).rgb, 1.0);
+
+    float3 color = get_texture_2d(constants.swapchain_write_texture_handle).Sample(input.texcoord.xy).rgb;
+
+    color = pow(color, float3(1 / 2.4));
+
+    output.color = float4(color, 1.0);
     return output;
 }

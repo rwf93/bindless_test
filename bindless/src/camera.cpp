@@ -15,7 +15,7 @@ void Camera::update() {
 	if(m.keySet.contains(SDLK_D))
 		m.velocity.x = 1;
 
-	m.position += glm::vec3(get_rotation_matrix() * glm::vec4(m.velocity * 0.1f, 0.f));
+	m.position += glm::vec3(get_rotation_matrix() * glm::vec4(m.velocity * 0.001f, 0.f));
 }
 
 void Camera::process_event(SDL_Event *event, SDL_Window *window) {

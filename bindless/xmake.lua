@@ -38,7 +38,8 @@ target("bindless_test")
         "vulkan-memory-allocator",
         "glm",
         "libsdl3",
-        "slang"--,
+        "slang",
+        "fastgltf"
         --"entt"
     )
     add_rules("defaults_rule")

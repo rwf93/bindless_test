@@ -7,7 +7,8 @@ add_requires(
 	"vulkan-headers v1.4.325",
 	"vk-bootstrap v1.3.292",
 	"vulkan-memory-allocator v3.1.0",
-	"glm 1.0.1"--,
+	"glm 1.0.1",
+    "fastgltf"
     --"entt"
 )
 

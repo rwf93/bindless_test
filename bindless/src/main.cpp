@@ -11,9 +11,12 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <slang.h>
 #include <slang-com-ptr.h>
+#include <fastgltf./core.hpp>
+#include <fastgltf/glm_element_traits.hpp>
+#include <variant>
 
 #define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
+#include <stb/stb_image.h>
 
 #include "camera.h"
 
@@ -205,6 +208,7 @@ class SlangProgram {
 	} m;
 
 	explicit SlangProgram(M m) : m(std::move(m)) {};
+
 public:
 	static SlangProgram create(const char *name, const char *path) {
 		if(!M::global_session.get())
@@ -236,11 +240,22 @@ public:
 
 		Slang::ComPtr<slang::ISession> session;
 		M::global_session->createSession(session_desc, session.writeRef());
-		Slang::ComPtr<slang::IBlob> diagnostics;
 
+		Slang::ComPtr<slang::IBlob> diagnostics;
 		Slang::ComPtr<slang::IModule> module {
 			session->loadModuleFromSource(name, path, nullptr, diagnostics.writeRef())
 		};
+
+		// Keep recompiling the shader if a diagnostic blob exists
+		while(diagnostics.get()) {
+			spdlog::error("{}", (char*)diagnostics->getBufferPointer());
+
+			module.setNull();
+			session.setNull();
+
+			M::global_session->createSession(session_desc, session.writeRef());
+			module = session->loadModuleFromSource(name, path, nullptr, diagnostics.writeRef());
+		}
 
 		Slang::ComPtr<slang::IComponentType> component;
 		module->link(component.writeRef());
@@ -272,7 +287,8 @@ void create_pipeline(
 	std::string name,
 	SlangProgram &program,
 	std::vector<VkFormat> color_attachments,
-	VkFormat depth_format = VK_FORMAT_UNDEFINED
+	VkFormat depth_format = VK_FORMAT_UNDEFINED,
+	VkCullModeFlagBits cullmode = VK_CULL_MODE_NONE
 ) {
 	VkPipelineInputAssemblyStateCreateInfo assembly_info = {};
 	VkPipelineViewportStateCreateInfo viewport_info = {};
@@ -306,8 +322,8 @@ void create_pipeline(
 
 	raster_info.polygonMode = VK_POLYGON_MODE_FILL;
 	raster_info.lineWidth = 1.0f;
-	raster_info.cullMode = VK_CULL_MODE_NONE;
-	raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+	raster_info.cullMode = cullmode;
+	raster_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
 	multisampling_info.sampleShadingEnable = VK_FALSE;
 	multisampling_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -355,7 +371,7 @@ void create_pipeline(
 	VK_CHECK(device().createShaderModule(&shader_module_info, nullptr, &shader_module));
 
 	std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
-
+	#if 0
 	for(auto child: program.module()->getModuleReflection()->getChildren()) {
 		if(child->getKind() == slang::DeclReflection::Kind::Struct) {
 			spdlog::info("struct name: {}\n", child->getName());
@@ -364,6 +380,7 @@ void create_pipeline(
 			}
 		}
 	}
+	#endif
 
 	vertex_stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
 	vertex_stage.module = shader_module;
@@ -978,6 +995,28 @@ template<typename T> class SharedBuffer {
 
 	explicit SharedBuffer<T>(M m) : m(std::move(m)) {}
 public:
+	~SharedBuffer<T>() {
+		if(m.allocation)
+			vmaUnmapMemory(vkctx.allocator, m.allocation);
+		vmaDestroyBuffer(vkctx.allocator, m.buffer, m.allocation);
+	}
+
+	SharedBuffer<T>(const SharedBuffer<T>&) = delete;  // No copying
+	SharedBuffer<T>& operator=(const SharedBuffer<T>&) = delete;
+	SharedBuffer<T>(SharedBuffer<T>&& other) noexcept : m(std::move(other.m)) {
+		memset(&other.m, 0, sizeof(M));
+	}
+	SharedBuffer<T>& operator=(SharedBuffer<T>&& other) noexcept {
+		if (this != &other) {
+			if(m.allocation)
+				vmaUnmapMemory(vkctx.allocator, m.allocation);
+			vmaDestroyBuffer(vkctx.allocator, m.buffer, m.allocation);
+			m = std::move(other.m);
+			memset(&other.m, 0, sizeof(M));
+		}
+		return *this;
+	}
+
 	static SharedBuffer<T> create(size_t count) {
 		VkBufferCreateInfo buffer_info = info::buffer_create_info(sizeof(T) * count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
@@ -1312,6 +1351,7 @@ struct SceneData {
 	glm::vec4 camera_position;
 	glm::mat4 projection;
 	glm::mat4 view;
+	uint32_t shadow_handle;
 };
 
 struct ObjectData {
@@ -1325,76 +1365,11 @@ struct LightData {
 
 struct MaterialData {
 	uint32_t albedo_handle;
-	uint32_t shadow_handle;
-	float metallic;
-	float roughness;
-	float ao;
-	VkPipeline pipeline;
+	uint32_t mrao_handle;
+	uint32_t emission_handle;
+	uint32_t normal_handle;
+	glm::vec4 base_color_factor;
 };
-
-static std::vector<Vertex> CUBE_VERTEX = {
-		{{-1.0f, -1.0f,  1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f}}, // Bottom-left
-		{{ 1.0f, -1.0f,  1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f}}, // Bottom-right
-		{{ 1.0f,  1.0f,  1.0f, 1.0f}, {1.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f}}, // Top-right
-		{{-1.0f,  1.0f,  1.0f, 1.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f}}, // Top-left
-
-		// Face 2 (Back)
-		{{-1.0f, -1.0f, -1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f, 0.0f}}, // Bottom-left (uv reversed for texture orientation)
-		{{ 1.0f, -1.0f, -1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f, 0.0f}}, // Bottom-right
-		{{ 1.0f,  1.0f, -1.0f, 1.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f, 0.0f}}, // Top-right
-		{{-1.0f,  1.0f, -1.0f, 1.0f}, {1.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f, 0.0f}}, // Top-left
-
-		// Face 3 (Top)
-		{{-1.0f,  1.0f, -1.0f, 1.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 0.0f}}, // Bottom-left (relative to top face)
-		{{ 1.0f,  1.0f, -1.0f, 1.0f}, {1.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 0.0f}}, // Bottom-right
-		{{ 1.0f,  1.0f,  1.0f, 1.0f}, {1.0f, 0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 0.0f}}, // Top-right
-		{{-1.0f,  1.0f,  1.0f, 1.0f}, {0.0f, 0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 0.0f}}, // Top-left
-
-		// Face 4 (Bottom)
-		{{-1.0f, -1.0f, -1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f, 0.0f}}, // Bottom-left
-		{{ 1.0f, -1.0f, -1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f, 0.0f}}, // Bottom-right
-		{{ 1.0f, -1.0f,  1.0f, 1.0f}, {1.0f, 1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f, 0.0f}}, // Top-right
-		{{-1.0f, -1.0f,  1.0f, 1.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f, 0.0f}}, // Top-left
-
-		// Face 5 (Right)
-		{{ 1.0f, -1.0f, -1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 0.0f}}, // Bottom-left
-		{{ 1.0f, -1.0f,  1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 0.0f}}, // Bottom-right
-		{{ 1.0f,  1.0f,  1.0f, 1.0f}, {1.0f, 1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 0.0f}}, // Top-right
-		{{ 1.0f,  1.0f, -1.0f, 1.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 0.0f}}, // Top-left
-
-		// Face 6 (Left)
-		{{-1.0f, -1.0f, -1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f, 0.0f}}, // Bottom-left
-		{{-1.0f, -1.0f,  1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f, 0.0f}}, // Bottom-right
-		{{-1.0f,  1.0f,  1.0f, 1.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f, 0.0f}}, // Top-right
-		{{-1.0f,  1.0f, -1.0f, 1.0f}, {1.0f, 1.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f, 0.0f}}  // Top-left
-};
-
-static std::vector<uint32_t> CUBE_INDEX = {
-		// Face 1 (Front)
-		0, 1, 2,
-		2, 3, 0,
-
-		// Face 2 (Back)
-		4, 5, 6,
-		6, 7, 4,
-
-		// Face 3 (Top)
-		8, 9, 10,
-		10, 11, 8,
-
-		// Face 4 (Bottom)
-		12, 13, 14,
-		14, 15, 12,
-
-		// Face 5 (Right)
-		16, 17, 18,
-		18, 19, 16,
-
-		// Face 6 (Left)
-		20, 21, 22,
-		22, 23, 20
-};
-
 
 void build_pipelines() {
 	for(auto &pipeline : pipelines) {
@@ -1433,7 +1408,8 @@ void build_pipelines() {
 	create_pipeline(
 		"bindless_framegraph_pbr",
 		bindless_pbr,
-		{ VK_FORMAT_R16G16B16A16_UNORM, VK_FORMAT_R8G8B8A8_UNORM }, VK_FORMAT_D32_SFLOAT
+		{ VK_FORMAT_R16G16B16A16_UNORM, VK_FORMAT_R8G8B8A8_UNORM }, VK_FORMAT_D32_SFLOAT,
+		VK_CULL_MODE_BACK_BIT
 	);
 
 	create_pipeline(
@@ -1449,6 +1425,242 @@ void build_pipelines() {
 	);
 }
 
+class Material {
+	struct M {
+		uint32_t internal_material_index;
+		VkPipeline *pipeline;
+	} m;
+	explicit Material(M m) : m(std::move(m)) {}
+public:
+	static Material create(
+		Texture2D &albedo,
+		Texture2D &mrao,
+		Texture2D &emission,
+		Texture2D &normal,
+		VkPipeline *pipeline,
+		SharedBuffer<MaterialData> &materials,
+		uint32_t &base_index
+	) {
+		uint32_t current_material = base_index++;
+		materials[current_material].albedo_handle = albedo.handle();
+		materials[current_material].mrao_handle = mrao.handle();
+		materials[current_material].emission_handle = emission.handle();
+		materials[current_material].normal_handle = normal.handle();
+
+		return Material(M{
+			.internal_material_index = current_material,
+			.pipeline = pipeline
+		});
+	};
+
+	void bind(VkCommandBuffer cmd, PushConstants &push_constants) {
+		push_constants.material = m.internal_material_index;
+		device().cmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, *m.pipeline);
+	}
+};
+
+class Mesh {
+	struct M {
+		GPUBuffer<Vertex> vbo;
+		GPUBuffer<uint32_t> ibo;
+		uint32_t material;
+	} m;
+
+	explicit Mesh(M m) : m(std::move(m)) {}
+public:
+	static Mesh create(std::vector<Vertex> &verts, std::vector<uint32_t> &index, uint32_t material_reference) {
+		return Mesh(M{
+			.vbo = std::move(GPUBuffer<Vertex>::create(verts)),
+			.ibo = std::move(GPUBuffer<uint32_t>::create(index)),
+			.material = std::move(material_reference)
+		});
+	}
+
+	uint32_t material() { return m.material; }
+
+	void draw(VkCommandBuffer cmd, PushConstants &push_constants, uint32_t instance_count, uint32_t first_instance) {
+		push_constants.vbo_handle 		= m.vbo.handle();
+		push_constants.ibo_handle 		= m.ibo.handle();
+
+		device().cmdPushConstants(
+			cmd,
+			global_layout,
+			VK_SHADER_STAGE_ALL,
+			0,
+			sizeof(PushConstants),
+			&push_constants
+		);
+		device().cmdDraw(cmd, m.ibo.count(), instance_count, 0, first_instance);
+	}
+};
+
+class Model {
+	struct M {
+		fastgltf::Expected<fastgltf::Asset> asset;
+		std::vector<Texture2D> textures;
+		std::vector<Material> materials;
+		std::vector<Mesh> meshes;
+		SharedBuffer<ObjectData> mesh_transforms;
+		SharedBuffer<MaterialData> material_data;
+	} m;
+
+	explicit Model(M m) : m(std::move(m)) {}
+public:
+	static Model create(std::filesystem::path path) {
+		static constexpr auto supported_extensions =
+			fastgltf::Extensions::KHR_mesh_quantization |
+			fastgltf::Extensions::KHR_texture_transform |
+			fastgltf::Extensions::KHR_materials_variants;
+
+		static constexpr auto gltf_options = fastgltf::Options::DontRequireValidAssetMember |
+            fastgltf::Options::AllowDouble |
+            fastgltf::Options::LoadExternalBuffers |
+           // fastgltf::Options::LoadExternalImages |
+			fastgltf::Options::GenerateMeshIndices;
+
+		fastgltf::Parser parser(supported_extensions);
+		auto gltf = fastgltf::MappedGltfFile::FromPath(path);
+
+		auto asset = path.extension() == "glb" ?
+			parser.loadGltfBinary(gltf.get(), path.parent_path(), gltf_options) :
+			parser.loadGltf(gltf.get(), path.parent_path(), gltf_options);
+
+		std::vector<Texture2D> textures;
+		for(auto &image : asset->images) {
+			std::visit(fastgltf::visitor {
+				[](auto& arg) {},
+				[&](fastgltf::sources::URI& image_path) {
+					auto full_path = path.parent_path().append(image_path.uri.path());
+					int w, h, comp;
+					unsigned char *data = stbi_load(full_path.string().c_str(), &w, &h, &comp, 4);
+					textures.emplace_back(with_result_of([&]() {
+						return Texture2D::create(w, h, VK_FORMAT_R8G8B8A8_UNORM, data);
+					}));
+					stbi_image_free(data);
+				}
+			}, image.data);
+		}
+
+		uint32_t base_index = 0;
+		auto material_data = SharedBuffer<MaterialData>::create(1024);
+
+		std::vector<Material> materials;
+		for(auto &material : asset->materials) {
+			if(material.pbrData.baseColorTexture.has_value()) {
+				materials.emplace_back(with_result_of([&](){
+					return Material::create(
+						textures[material.pbrData.baseColorTexture.value().textureIndex],
+						textures[material.pbrData.metallicRoughnessTexture.value().textureIndex],
+						textures[material.emissiveTexture.value().textureIndex],
+						textures[material.normalTexture.value().textureIndex],
+						&pipelines["bindless_framegraph_pbr"],
+						material_data,
+						base_index
+					);
+				}));
+			}
+		}
+
+		// Mesh paired with Material index
+		std::vector<Mesh> meshes;
+		for(auto &mesh : asset->meshes) {
+			for(auto it = mesh.primitives.begin(); it != mesh.primitives.end(); ++it) {
+				uint32_t material = 0;
+				if(it->materialIndex.has_value())
+					material = it->materialIndex.value();
+
+				std::vector<glm::vec4> positions;
+				{
+					auto *position_it = it->findAttribute("POSITION");
+					auto &position_accessor = asset->accessors[position_it->accessorIndex];
+					positions.resize(position_accessor.count);
+					if(!position_accessor.bufferViewIndex.has_value())
+						continue;
+					fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(asset.get(), position_accessor, [&](fastgltf::math::fvec3 pos, std::size_t idx) {
+						positions[idx] = glm::vec4(pos.x(), pos.y(), pos.z(), 1);
+					});
+				}
+
+				std::vector<glm::vec4> normals;
+				{
+					auto *normal_it = it->findAttribute("NORMAL");
+					auto &normal_accessor = asset->accessors[normal_it->accessorIndex];
+					normals.resize(normal_accessor.count);
+					if(!normal_accessor.bufferViewIndex.has_value())
+						continue;
+					fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(asset.get(), normal_accessor, [&](fastgltf::math::fvec3 pos, std::size_t idx) {
+						normals[idx] = glm::vec4(pos.x(), pos.y(), pos.z(), 1);
+					});
+				}
+
+				std::vector<glm::vec4> texcoords;
+				{
+					auto *texcoord_it = it->findAttribute("TEXCOORD_0");
+					auto &texcoord_accessor = asset->accessors[texcoord_it->accessorIndex];
+					texcoords.resize(texcoord_accessor.count);
+					if(!texcoord_accessor.bufferViewIndex.has_value())
+						continue;
+					fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec2>(asset.get(), texcoord_accessor, [&](fastgltf::math::fvec2 pos, std::size_t idx) {
+						texcoords[idx] = glm::vec4(pos.x(), pos.y(), 1, 1);
+					});
+				}
+
+				std::vector<uint32_t> indicies;
+				{
+					auto& index_accessor = asset->accessors[it->indicesAccessor.value()];
+        			if (!index_accessor.bufferViewIndex.has_value())
+						continue;
+					indicies.resize(index_accessor.count);
+					fastgltf::iterateAccessorWithIndex<uint32_t>(asset.get(), index_accessor, [&](uint32_t val, size_t idx) {
+						indicies[idx] = val;
+					});
+				}
+
+				// why would they be different??!??!?!?!?!?
+				assert(positions.size() == texcoords.size());
+				assert(positions.size() == normals.size());
+
+				std::vector<Vertex> verticies(positions.size());
+				for(int i = 0; i < verticies.size(); i++) {
+					verticies[i].position = positions[i];
+					verticies[i].texcoord = texcoords[i];
+					verticies[i].normal = normals[i];
+				}
+
+				meshes.emplace_back(with_result_of([&](){
+					return Mesh::create(verticies, indicies, it->materialIndex.value());
+				}));
+			}
+		}
+
+		auto mesh_transforms = SharedBuffer<ObjectData>::create(meshes.size());
+
+		return Model(M{
+			.asset = std::move(asset),
+			.textures = std::move(textures),
+			.materials = std::move(materials),
+			.meshes = std::move(meshes),
+			.mesh_transforms = std::move(mesh_transforms),
+			.material_data = std::move(material_data)
+		});
+	}
+
+	void draw(VkCommandBuffer cmd, PushConstants &constants) {
+		constants.material_handle = m.material_data.handle();
+		constants.object_handle = m.mesh_transforms.handle();
+		fastgltf::iterateSceneNodes(m.asset.get(), 0, fastgltf::math::fmat4x4(), [&](fastgltf::Node& node, fastgltf::math::fmat4x4 matrix) {
+			m.mesh_transforms[node.meshIndex.value()].model = glm::make_mat4(&matrix[0][0]);
+
+			m.materials[m.meshes[node.meshIndex.value()].material()].bind(cmd, constants);
+			m.meshes[node.meshIndex.value()].draw(cmd, constants, 1, node.meshIndex.value());
+		});
+	}
+
+	Mesh &mesh(size_t idx) {
+		return m.meshes.at(idx);
+	}
+};
+
 int main(int argc, char** argv) {
 	if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
 		spdlog::error("Couldn't initalize SDL");
@@ -1460,23 +1672,6 @@ int main(int argc, char** argv) {
 	create_vk_shit();
 	build_pipelines();
 	create_imgui_shit();
-
-	auto triangle_vbo = GPUBuffer<Vertex>::create(CUBE_VERTEX);
-	auto triangle_ibo = GPUBuffer<uint32_t>::create(CUBE_INDEX);
-
-	auto scene = SharedBuffer<SceneData>::create(1);
-	auto objects = SharedBuffer<ObjectData>::create(1024);
-	auto materials = SharedBuffer<MaterialData>::create(512);
-	auto lights = SharedBuffer<LightData>::create(12);
-
-	uint32_t black = glm::packUnorm4x8(glm::vec4(0, 0, 0, 0));
-	uint32_t magenta = glm::packUnorm4x8(glm::vec4(1, 0, 1, 1));
-
-	auto missing_texture = Texture2D::create(16, 16, VK_FORMAT_R8G8B8A8_UNORM,
-		[=](int x, int y) { return ((x % 2) ^ (y % 2)) ? magenta : black; }
-	);
-
-	auto camera = Camera::create();
 
 	auto color = Texture2D::create_empty(
 		1600, 900,
@@ -1504,22 +1699,45 @@ int main(int argc, char** argv) {
 		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
 	);
 
-	objects[0].model = calculate_model_matrix(glm::vec3(0), glm::vec3(0), glm::vec3(1));
-	objects[1].model = calculate_model_matrix(glm::vec3(1.5, -3, 0), glm::vec3(0), glm::vec3(1));
+	auto camera = Camera::create();
 
-	materials[0].albedo_handle = missing_texture.handle();
-	materials[0].shadow_handle = shadowmap.handle();
-	materials[0].metallic = 0.5;
-	materials[0].roughness = 0.22;
-	materials[0].ao = 1.0f;
-	materials[0].pipeline = pipelines["bindless_framegraph_pbr"];
+	/* Scene specific info */
+	auto scene = SharedBuffer<SceneData>::create(1);
+	auto objects = SharedBuffer<ObjectData>::create(1024);
+	auto materials = SharedBuffer<MaterialData>::create(512);
+	auto lights = SharedBuffer<LightData>::create(12);
 
-	lights[0].position = glm::vec4(-10.0f, 10.0f, -10.0f, 10.0f);
-	lights[0].color = glm::vec4(255, 255, 255, 255);
+	auto missing_texture = Texture2D::create(16, 16, VK_FORMAT_R8G8B8A8_UNORM,
+		[=](int x, int y) { return ((x % 2) ^ (y % 2)) ? glm::packUnorm4x8(glm::vec4(0, 0, 0, 0)) : glm::packUnorm4x8(glm::vec4(1, 0, 1, 1)); }
+	);
 
-	auto draw_scene = [&](VkCommandBuffer cmd) -> void {
-		device().cmdDraw(cmd, triangle_ibo.count(), 2, 0, 0);
-	};
+	uint32_t materials_index = 0;
+	auto unlit_missing_texture = Material::create(
+		missing_texture,
+		missing_texture,
+		missing_texture,
+		missing_texture,
+		&pipelines["bindless_framegraph"],
+		materials,
+		materials_index
+	);
+
+	#if 1
+	auto sponza = Model::create("C:\\Users\\rwf93\\Downloads\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
+	#else
+	auto sponza = Model::create("C:\\Users\\rwf93\\Downloads\\sponza-gltf-pbr\\DamagedHelmet.gltf");
+	#endif
+
+
+	lights[0].position = glm::vec4(-10.0f,  10.0f, 10.0f, 1.0f),
+	lights[1].position = glm::vec4( 10.0f,  10.0f, 10.0f, 1.0f),
+	lights[2].position = glm::vec4(-10.0f, -10.0f, 10.0f, 1.0f),
+	lights[3].position = glm::vec4( 10.0f, -10.0f, 10.0f, 1.0f),
+
+	lights[0].color = glm::vec4(300, 300, 300, 255);
+	lights[1].color = glm::vec4(300, 300, 300, 255);
+	lights[2].color = glm::vec4(300, 300, 300, 255);
+	lights[3].color = glm::vec4(300, 300, 300, 255);
 
 	auto normal_imgui = ImGui_ImplVulkan_AddTexture(vkctx.sampler_address_repeat, color.image().view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
@@ -1535,13 +1753,14 @@ int main(int argc, char** argv) {
 				FrameGraph::Output{
 					.name = "shadowmap",
 					.load_op = VK_ATTACHMENT_LOAD_OP_CLEAR,
-					.store_op = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+					.store_op = VK_ATTACHMENT_STORE_OP_STORE,
 					.clear_value = {1.0, 1.0, 1.0, 1.0}
 				}
 			},
 			[&](VkCommandBuffer cmd) {
+#if 0
 				float near_plane = 1.0f, far_plane = 7.5f;
-				/*
+
 				PushConstants push_constants 	= {};
 				push_constants.vbo_handle 		= triangle_vbo.handle();
 				push_constants.ibo_handle 		= triangle_ibo.handle();
@@ -1561,7 +1780,7 @@ int main(int argc, char** argv) {
 				);
 				device().cmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines["shadow"]);
 				draw_scene(cmd);
-				*/
+#endif
 			}
 		)
 		.add_pass("gbuffer",
@@ -1595,7 +1814,7 @@ int main(int argc, char** argv) {
 					glm::radians(70.0f),
 					1600.0f / 900.0f,
 					0.1f,
-					100.0f
+					5000.0f
 				);
 				scene->projection[1][1] *= -1;
 
@@ -1603,24 +1822,10 @@ int main(int argc, char** argv) {
 				scene->camera_position = glm::vec4(camera.get_position(), 0);
 
 				PushConstants push_constants 	= {};
-				push_constants.vbo_handle 		= triangle_vbo.handle();
-				push_constants.ibo_handle 		= triangle_ibo.handle();
 				push_constants.scene_handle 	= scene.handle();
-				push_constants.object_handle 	= objects.handle();
 				push_constants.light_handle 	= lights.handle();
-				push_constants.material_handle  = materials.handle();
-				push_constants.material 		= 0;
 
-				device().cmdPushConstants(
-					cmd,
-					global_layout,
-					VK_SHADER_STAGE_ALL,
-					0,
-					sizeof(PushConstants),
-					&push_constants
-				);
-				device().cmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines["bindless_framegraph_pbr"]);
-				draw_scene(cmd);
+				sponza.draw(cmd, push_constants);
 			}
 		)
 		.add_pass("swapchain_write",
@@ -1647,7 +1852,7 @@ int main(int argc, char** argv) {
 				PushConstants push_constants = {};
 				push_constants.vbo_handle 						= UINT32_MAX;
 				push_constants.ibo_handle						= UINT32_MAX;
-				push_constants.scene_handle 					= UINT32_MAX;
+				push_constants.scene_handle 					= scene.handle();
 				push_constants.object_handle 					= UINT32_MAX;
 				push_constants.swapchain_write_texture_handle 	= color.handle();
 				device().cmdPushConstants(

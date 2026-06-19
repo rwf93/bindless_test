@@ -19,21 +19,19 @@ struct Scene {
     float4 camera_position;
     float4x4 projection;
     float4x4 view;
+    uint32_t shadow_handle;
+    uint32_t time;
 };
 
 struct Object {
     float4x4 model;
-
 };
 
 struct Material {
     uint32_t albedo_handle;
-    uint32_t shadow_handle;
-    float metallic;
-    float roughness;
-    float ao;
-    uint32_t pad;
-    uint32_t pad1;
+    uint32_t mrao_handle;
+    uint32_t emission_handle;
+    uint32_t normal_handle;
 };
 
 struct Light {
@@ -52,10 +50,6 @@ struct Light {
 
 Scene get_scene() {
     return typed_scene[constants.scene_handle][0];
-}
-
-Scene get_light_scene() {
-    return typed_scene[constants.scene_handle][1];
 }
 
 Object get_object(uint32_t index) {
