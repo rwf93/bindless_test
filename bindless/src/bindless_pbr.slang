@@ -1,5 +1,20 @@
 #include "shader_constants.slangh"
 
+// This shader's material parameters.
+struct Material {
+    uint32_t albedo_handle;
+    uint32_t mrao_handle;
+    uint32_t emission_handle;
+    uint32_t normal_handle;
+    float4 base_color_factor;
+};
+
+[vk::binding(0, 0)] StructuredBuffer<Material> typed_material[];
+
+Material get_material() {
+    return typed_material[constants.material_handle][constants.material];
+}
+
 struct VertexOutput {
     float4 position : SV_Position;
     float4 texcoord : TEXCOORD0;
@@ -117,6 +132,7 @@ FragmentOutput fragment_main(VertexOutput input) {
     Scene scene = get_scene();
 
     float3 albedo = get_texture_2d(material.albedo_handle).Sample(input.texcoord.xy).rgb;
+    albedo *= material.base_color_factor.rgb;
     float metallic = get_texture_2d(material.mrao_handle).Sample(input.texcoord.xy).r;
     float roughness = get_texture_2d(material.mrao_handle).Sample(input.texcoord.xy).g;
     float ao = get_texture_2d(material.mrao_handle).Sample(input.texcoord.xy).b;

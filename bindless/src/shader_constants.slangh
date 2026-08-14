@@ -27,13 +27,6 @@ struct Object {
     float4x4 model;
 };
 
-struct Material {
-    uint32_t albedo_handle;
-    uint32_t mrao_handle;
-    uint32_t emission_handle;
-    uint32_t normal_handle;
-};
-
 struct Light {
     float4 position;
     float4 color;
@@ -45,7 +38,6 @@ struct Light {
 [vk::binding(0, 0)] StructuredBuffer<Scene> typed_scene[];
 [vk::binding(0, 0)] StructuredBuffer<Object> typed_object[];
 [vk::binding(0, 0)] StructuredBuffer<Light> typed_light[];
-[vk::binding(0, 0)] StructuredBuffer<Material> typed_material[];
 [vk::binding(0, 1)] Sampler2D textures_2d[];
 
 Scene get_scene() {
@@ -72,6 +64,8 @@ Light get_light(uint32_t index) {
     return typed_light[constants.light_handle][index];
 }
 
-Material get_material() {
-    return typed_material[constants.material_handle][constants.material];
-}
+// `Material` is intentionally NOT defined here: each shader that consumes
+// materials declares its own `Material` parameter struct together with a
+// `typed_material[]` binding and a `get_material()` helper. The host reflects
+// into the shader's `Material` struct (see MaterialLayout in main.cpp) to lay
+// out the material buffer, so the C++ side never hard-codes material fields.

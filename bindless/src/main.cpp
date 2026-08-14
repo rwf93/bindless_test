@@ -14,6 +14,8 @@
 #include <fastgltf./core.hpp>
 #include <fastgltf/glm_element_traits.hpp>
 #include <variant>
+#include <array>
+#include <cstring>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
@@ -282,7 +284,88 @@ public:
 	}
 };
 
-static std::map<std::string, VkPipeline> pipelines;
+// A single reflected field of a shader's `Material` parameter struct.
+struct MaterialField {
+	std::string name;
+	uint32_t offset;
+	size_t size;
+};
+
+// Reflected layout of a shader's `Material` struct. This is the "dynamic struct"
+// on the C++ side: instead of a hard-coded `MaterialData`, we ask the shader what
+// its material parameters are (name + byte offset + size) and write into a raw
+// byte buffer accordingly. Stride matches the shader's `sizeof(Material)` so
+// `StructuredBuffer<Material>[i]` indexes the same slot the CPU wrote.
+struct MaterialLayout {
+	size_t stride = 0;
+	std::vector<MaterialField> fields;
+	std::unordered_map<std::string, size_t> by_name;
+
+	bool valid() const { return stride > 0; }
+
+	const MaterialField *find(const std::string &name) const {
+		auto it = by_name.find(name);
+		return it == by_name.end() ? nullptr : &fields[it->second];
+	}
+
+	// Reflect the shader's `Material` struct by name from a SlangProgram.
+	static MaterialLayout reflect(SlangProgram &program, const char *struct_name = "Material") {
+		MaterialLayout layout;
+		auto module = program.module();
+		if(!module) return layout;
+
+		slang::DeclReflection *module_decl = module->getModuleReflection();
+		if(!module_decl) return layout;
+
+		slang::ProgramLayout *program_layout = program.component()->getLayout(0);
+		if(!program_layout) return layout;
+
+		for(auto child : module_decl->getChildren()) {
+			if(child->getKind() != slang::DeclReflection::Kind::Struct)
+				continue;
+
+			const char *name = child->getName();
+			if(!name || strcmp(name, struct_name) != 0)
+				continue;
+
+			slang::TypeReflection *type = child->getType();
+			if(!type) return layout;
+
+			slang::TypeLayoutReflection *type_layout = program_layout->getTypeLayout(type);
+			if(!type_layout) return layout;
+
+			layout.stride = type_layout->getStride();
+			for(unsigned int i = 0; i < type_layout->getFieldCount(); i++) {
+				auto *field = type_layout->getFieldByIndex(i);
+				if(!field || !field->getName()) continue;
+
+				MaterialField f;
+				f.name = field->getName();
+				f.offset = uint32_t(field->getOffset());
+				f.size = field->getTypeLayout() ? field->getTypeLayout()->getStride() : 0;
+
+				layout.by_name[f.name] = layout.fields.size();
+				layout.fields.push_back(std::move(f));
+			}
+
+			spdlog::info("reflected Material layout: stride={} fields={}", layout.stride, layout.fields.size());
+			for(const auto &f : layout.fields)
+				spdlog::info("  Material field '{}' @ offset {} ({} bytes)", f.name, f.offset, f.size);
+
+			return layout;
+		}
+
+		return layout; // shader declares no Material struct
+	}
+};
+
+struct PipelineInfo {
+	VkPipeline pipeline = VK_NULL_HANDLE;
+	MaterialLayout material_layout;
+};
+
+static std::map<std::string, PipelineInfo> pipelines;
+
 void create_pipeline(
 	std::string name,
 	SlangProgram &program,
@@ -371,16 +454,6 @@ void create_pipeline(
 	VK_CHECK(device().createShaderModule(&shader_module_info, nullptr, &shader_module));
 
 	std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
-	#if 0
-	for(auto child: program.module()->getModuleReflection()->getChildren()) {
-		if(child->getKind() == slang::DeclReflection::Kind::Struct) {
-			spdlog::info("struct name: {}\n", child->getName());
-			for(auto struct_child: child->getChildren()) {
-				spdlog::info("\t field name: {}\n", struct_child->getName());
-			}
-		}
-	}
-	#endif
 
 	vertex_stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
 	vertex_stage.module = shader_module;
@@ -414,7 +487,10 @@ void create_pipeline(
 	VkPipeline pipeline;
 	VK_CHECK(device().createGraphicsPipelines(VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline));
 
-	pipelines[name] = pipeline;
+	pipelines[name] = PipelineInfo {
+		.pipeline = pipeline,
+		.material_layout = MaterialLayout::reflect(program)
+	};
 }
 
 void create_vk_shit() {
@@ -1363,19 +1439,15 @@ struct LightData {
 	glm::vec4 color;
 };
 
-struct MaterialData {
-	uint32_t albedo_handle;
-	uint32_t mrao_handle;
-	uint32_t emission_handle;
-	uint32_t normal_handle;
-	glm::vec4 base_color_factor;
-};
+// Note: there is intentionally no hard-coded `MaterialData` struct. Each shader
+// declares its own `Material` parameters and the host reflects them into a
+// `MaterialLayout`, materialized as a raw-byte `MaterialBuffer`.
 
 void build_pipelines() {
 	for(auto &pipeline : pipelines) {
-		if(pipeline.second != VK_NULL_HANDLE) {
+		if(pipeline.second.pipeline != VK_NULL_HANDLE) {
 			device().deviceWaitIdle();
-			device().destroyPipeline(pipeline.second, nullptr);
+			device().destroyPipeline(pipeline.second.pipeline, nullptr);
 		}
 	}
 
@@ -1425,37 +1497,177 @@ void build_pipelines() {
 	);
 }
 
+// A single material parameter value, addressed by the field name the *shader*
+// declares in its `Material` struct. The value is stored inline (by copy) so it
+// is always safe to build these as temporaries in an initializer list.
+struct MaterialParam {
+	std::string name;
+	std::array<uint8_t, 64> storage{};
+	size_t size = 0;
+
+	static MaterialParam tex(const char *name, uint32_t value) {
+		MaterialParam p; p.name = name; p.size = sizeof(value);
+		std::memcpy(p.storage.data(), &value, sizeof(value));
+		return p;
+	}
+
+	static MaterialParam vec4(const char *name, const glm::vec4 &value) {
+		MaterialParam p; p.name = name; p.size = sizeof(value);
+		std::memcpy(p.storage.data(), &value, sizeof(value));
+		return p;
+	}
+
+	static MaterialParam raw(const char *name, const void *data, size_t size) {
+		MaterialParam p; p.name = name; p.size = size;
+		assert(size <= p.storage.size());
+		std::memcpy(p.storage.data(), data, size);
+		return p;
+	}
+};
+
+// A host-visible buffer of `count` materials, each `stride` bytes wide. `stride`
+// is whatever the owning shader's `Material` struct reflects as, so the same
+// buffer indexes identically to `StructuredBuffer<Material>[i]` on the GPU.
+class MaterialBuffer {
+	struct M {
+		VmaAllocation allocation = VK_NULL_HANDLE;
+		VkBuffer buffer = VK_NULL_HANDLE;
+		size_t count = 0;
+		size_t stride = 0;
+		size_t next = 0;
+		uint32_t handle = 0;
+		uint8_t *mapped = nullptr;
+	} m;
+
+	explicit MaterialBuffer(M m) : m(std::move(m)) {}
+public:
+	MaterialBuffer() = default;
+
+	~MaterialBuffer() {
+		if(m.allocation) vmaUnmapMemory(vkctx.allocator, m.allocation);
+		if(m.buffer) vmaDestroyBuffer(vkctx.allocator, m.buffer, m.allocation);
+	}
+
+	MaterialBuffer(const MaterialBuffer&) = delete;
+	MaterialBuffer &operator=(const MaterialBuffer&) = delete;
+
+	MaterialBuffer(MaterialBuffer &&other) noexcept : m(std::move(other.m)) {
+		memset(&other.m, 0, sizeof(M));
+		other.m.mapped = nullptr;
+	}
+
+	MaterialBuffer &operator=(MaterialBuffer &&other) noexcept {
+		if (this != &other) {
+			if(m.allocation) vmaUnmapMemory(vkctx.allocator, m.allocation);
+			if(m.buffer) vmaDestroyBuffer(vkctx.allocator, m.buffer, m.allocation);
+			m = std::move(other.m);
+			memset(&other.m, 0, sizeof(M));
+			other.m.mapped = nullptr;
+		}
+		return *this;
+	}
+
+	static MaterialBuffer create(size_t stride, size_t count) {
+		assert(stride > 0);
+		VkBufferCreateInfo buffer_info = info::buffer_create_info(stride * count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+
+		VmaAllocationCreateInfo alloc_info = {};
+		alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+		alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+		alloc_info.preferredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+		VmaAllocation allocation;
+		VkBuffer buffer;
+		VK_CHECK(vmaCreateBuffer(vkctx.allocator, &buffer_info, &alloc_info, &buffer, &allocation, nullptr));
+
+		void *mapped_data = nullptr;
+		vmaMapMemory(vkctx.allocator, allocation, &mapped_data);
+		memset(mapped_data, 0, stride * count);
+
+		VkDescriptorBufferInfo buffer_info_desc = {};
+		buffer_info_desc.buffer = buffer;
+		buffer_info_desc.offset = 0;
+		buffer_info_desc.range = stride * count;
+
+		VkWriteDescriptorSet write_desc = {};
+		write_desc.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write_desc.dstSet = bindless_storage_desc;
+		write_desc.dstBinding = 0;
+		write_desc.dstArrayElement = bindless_storage_index;
+		write_desc.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		write_desc.descriptorCount = 1;
+		write_desc.pBufferInfo = &buffer_info_desc;
+
+		device().updateDescriptorSets(1, &write_desc, 0, nullptr);
+
+		return MaterialBuffer(M{
+			.allocation = allocation,
+			.buffer = buffer,
+			.count = count,
+			.stride = stride,
+			.handle = bindless_storage_index++,
+			.mapped = (uint8_t*)mapped_data,
+		});
+	}
+
+	uint32_t handle() const { return m.handle; }
+	size_t stride() const { return m.stride; }
+	size_t count() const { return m.count; }
+	size_t used() const { return m.next; }
+
+	uint32_t alloc() {
+		assert(m.next < m.count);
+		return uint32_t(m.next++);
+	}
+
+	uint8_t *operator[](size_t index) const { return m.mapped + index * m.stride; }
+};
+
+// A material instance bound to a shader/pipeline. Its parameters are written by
+// name into the owning `MaterialBuffer` at the offsets the shader's `Material`
+// struct reflected. The C++ side never names or sizes a material field itself.
 class Material {
 	struct M {
 		uint32_t internal_material_index;
-		VkPipeline *pipeline;
+		PipelineInfo *pipeline;
 	} m;
+
 	explicit Material(M m) : m(std::move(m)) {}
 public:
 	static Material create(
-		Texture2D &albedo,
-		Texture2D &mrao,
-		Texture2D &emission,
-		Texture2D &normal,
-		VkPipeline *pipeline,
-		SharedBuffer<MaterialData> &materials,
-		uint32_t &base_index
+		PipelineInfo *pipeline,
+		MaterialBuffer &materials,
+		std::initializer_list<MaterialParam> params
 	) {
-		uint32_t current_material = base_index++;
-		materials[current_material].albedo_handle = albedo.handle();
-		materials[current_material].mrao_handle = mrao.handle();
-		materials[current_material].emission_handle = emission.handle();
-		materials[current_material].normal_handle = normal.handle();
+		const MaterialLayout &layout = pipeline->material_layout;
+		assert(layout.valid());
+
+		uint32_t current_material = materials.alloc();
+		uint8_t *slot = materials[current_material];
+		memset(slot, 0, layout.stride);
+
+		for(const auto &param : params) {
+			const MaterialField *field = layout.find(param.name);
+			if(!field) {
+				spdlog::warn("Material::create: shader declares no field '{}' (layout stride {}); ignoring",
+					param.name, layout.stride);
+				continue;
+			}
+			size_t copy = param.size < field->size ? param.size : field->size;
+			std::memcpy(slot + field->offset, param.storage.data(), copy);
+		}
 
 		return Material(M{
 			.internal_material_index = current_material,
 			.pipeline = pipeline
 		});
-	};
+	}
+
+	uint32_t index() const { return m.internal_material_index; }
 
 	void bind(VkCommandBuffer cmd, PushConstants &push_constants) {
 		push_constants.material = m.internal_material_index;
-		device().cmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, *m.pipeline);
+		device().cmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m.pipeline->pipeline);
 	}
 };
 
@@ -1495,18 +1707,20 @@ public:
 };
 
 class Model {
+	static constexpr size_t max_instances = 128;
 	struct M {
 		fastgltf::Expected<fastgltf::Asset> asset;
 		std::vector<Texture2D> textures;
 		std::vector<Material> materials;
 		std::vector<Mesh> meshes;
 		SharedBuffer<ObjectData> mesh_transforms;
-		SharedBuffer<MaterialData> material_data;
+		MaterialBuffer material_data;
+		size_t next_instance = 0;
 	} m;
 
 	explicit Model(M m) : m(std::move(m)) {}
 public:
-	static Model create(std::filesystem::path path) {
+	static Model create(std::filesystem::path path, PipelineInfo &pipeline) {
 		static constexpr auto supported_extensions =
 			fastgltf::Extensions::KHR_mesh_quantization |
 			fastgltf::Extensions::KHR_texture_transform |
@@ -1541,21 +1755,24 @@ public:
 			}, image.data);
 		}
 
-		uint32_t base_index = 0;
-		auto material_data = SharedBuffer<MaterialData>::create(1024);
+		auto material_data = MaterialBuffer::create(pipeline.material_layout.stride, 1024);
 
 		std::vector<Material> materials;
 		for(auto &material : asset->materials) {
 			if(material.pbrData.baseColorTexture.has_value()) {
+				glm::vec4 base_color_factor(1.0f); // glm's default tint; wire up from glTF `baseColorFactor` if desired
+
 				materials.emplace_back(with_result_of([&](){
 					return Material::create(
-						textures[material.pbrData.baseColorTexture.value().textureIndex],
-						textures[material.pbrData.metallicRoughnessTexture.value().textureIndex],
-						textures[material.emissiveTexture.value().textureIndex],
-						textures[material.normalTexture.value().textureIndex],
-						&pipelines["bindless_framegraph_pbr"],
+						&pipeline,
 						material_data,
-						base_index
+						{
+							MaterialParam::tex("albedo_handle", textures[material.pbrData.baseColorTexture.value().textureIndex].handle()),
+							MaterialParam::tex("mrao_handle", textures[material.pbrData.metallicRoughnessTexture.value().textureIndex].handle()),
+							MaterialParam::tex("emission_handle", textures[material.emissiveTexture.value().textureIndex].handle()),
+							MaterialParam::tex("normal_handle", textures[material.normalTexture.value().textureIndex].handle()),
+							MaterialParam::vec4("base_color_factor", base_color_factor),
+						}
 					);
 				}));
 			}
@@ -1633,7 +1850,7 @@ public:
 			}
 		}
 
-		auto mesh_transforms = SharedBuffer<ObjectData>::create(meshes.size());
+		auto mesh_transforms = SharedBuffer<ObjectData>::create(meshes.size() * max_instances);
 
 		return Model(M{
 			.asset = std::move(asset),
@@ -1645,16 +1862,33 @@ public:
 		});
 	}
 
-	void draw(VkCommandBuffer cmd, PushConstants &constants) {
+	// Draws the model once at `world`. Each call occupies its own contiguous
+	// block of transform slots (one per mesh), so the same model may be drawn
+	// many times per frame without overwriting earlier instances' transforms.
+	// The shader indexes `get_object(SV_VulkanInstanceID)` == `first_instance`,
+	// so each mesh is drawn with first_instance = base + meshIndex.
+	void draw(VkCommandBuffer cmd, PushConstants &constants, const glm::mat4 &world = glm::mat4(1.0f)) {
 		constants.material_handle = m.material_data.handle();
 		constants.object_handle = m.mesh_transforms.handle();
-		fastgltf::iterateSceneNodes(m.asset.get(), 0, fastgltf::math::fmat4x4(), [&](fastgltf::Node& node, fastgltf::math::fmat4x4 matrix) {
-			m.mesh_transforms[node.meshIndex.value()].model = glm::make_mat4(&matrix[0][0]);
 
-			m.materials[m.meshes[node.meshIndex.value()].material()].bind(cmd, constants);
-			m.meshes[node.meshIndex.value()].draw(cmd, constants, 1, node.meshIndex.value());
+		uint32_t base = uint32_t(m.next_instance * m.meshes.size());
+		assert(m.next_instance < max_instances);
+		m.next_instance++;
+
+		fastgltf::iterateSceneNodes(m.asset.get(), 0, fastgltf::math::fmat4x4(), [&](fastgltf::Node& node, fastgltf::math::fmat4x4 matrix) {
+			uint32_t mesh_index = node.meshIndex.value();
+			glm::mat4 node_matrix = world * glm::make_mat4(&matrix[0][0]);
+
+			uint32_t slot = base + mesh_index;
+			m.mesh_transforms[slot].model = node_matrix;
+
+			m.materials[m.meshes[mesh_index].material()].bind(cmd, constants);
+			m.meshes[mesh_index].draw(cmd, constants, 1, slot);
 		});
 	}
+
+	// Clears the instance counter; call once per frame before drawing.
+	void reset() { m.next_instance = 0; }
 
 	Mesh &mesh(size_t idx) {
 		return m.meshes.at(idx);
@@ -1703,31 +1937,9 @@ int main(int argc, char** argv) {
 
 	/* Scene specific info */
 	auto scene = SharedBuffer<SceneData>::create(1);
-	auto objects = SharedBuffer<ObjectData>::create(1024);
-	auto materials = SharedBuffer<MaterialData>::create(512);
 	auto lights = SharedBuffer<LightData>::create(12);
 
-	auto missing_texture = Texture2D::create(16, 16, VK_FORMAT_R8G8B8A8_UNORM,
-		[=](int x, int y) { return ((x % 2) ^ (y % 2)) ? glm::packUnorm4x8(glm::vec4(0, 0, 0, 0)) : glm::packUnorm4x8(glm::vec4(1, 0, 1, 1)); }
-	);
-
-	uint32_t materials_index = 0;
-	auto unlit_missing_texture = Material::create(
-		missing_texture,
-		missing_texture,
-		missing_texture,
-		missing_texture,
-		&pipelines["bindless_framegraph"],
-		materials,
-		materials_index
-	);
-
-	#if 1
-	auto sponza = Model::create("C:\\Users\\rwf93\\Downloads\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
-	#else
-	auto sponza = Model::create("C:\\Users\\rwf93\\Downloads\\sponza-gltf-pbr\\DamagedHelmet.gltf");
-	#endif
-
+	auto helmet = Model::create("C:\\Users\\rwf93\\Downloads\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf", pipelines["bindless_framegraph_pbr"]);
 
 	lights[0].position = glm::vec4(-10.0f,  10.0f, 10.0f, 1.0f),
 	lights[1].position = glm::vec4( 10.0f,  10.0f, 10.0f, 1.0f),
@@ -1754,33 +1966,10 @@ int main(int argc, char** argv) {
 					.name = "shadowmap",
 					.load_op = VK_ATTACHMENT_LOAD_OP_CLEAR,
 					.store_op = VK_ATTACHMENT_STORE_OP_STORE,
-					.clear_value = {1.0, 1.0, 1.0, 1.0}
+					.clear_value = {1.0f, 1.0f, 1.0f, 1.0f}
 				}
 			},
 			[&](VkCommandBuffer cmd) {
-#if 0
-				float near_plane = 1.0f, far_plane = 7.5f;
-
-				PushConstants push_constants 	= {};
-				push_constants.vbo_handle 		= triangle_vbo.handle();
-				push_constants.ibo_handle 		= triangle_ibo.handle();
-				push_constants.scene_handle 	= scene.handle();
-				push_constants.object_handle 	= objects.handle();
-				push_constants.light_handle 	= lights.handle();
-				push_constants.material_handle  = materials.handle();
-				push_constants.material 		= 0;
-
-				device().cmdPushConstants(
-					cmd,
-					global_layout,
-					VK_SHADER_STAGE_ALL,
-					0,
-					sizeof(PushConstants),
-					&push_constants
-				);
-				device().cmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines["shadow"]);
-				draw_scene(cmd);
-#endif
 			}
 		)
 		.add_pass("gbuffer",
@@ -1794,19 +1983,19 @@ int main(int argc, char** argv) {
 					.name = "color",
 					.load_op = VK_ATTACHMENT_LOAD_OP_CLEAR,
 					.store_op = VK_ATTACHMENT_STORE_OP_STORE,
-					.clear_value = {0.0, 0.0, 0.0, 1.0}
+					.clear_value = {0.0f, 0.0f, 0.0f, 1.0f}
 				},
 				FrameGraph::Output{
 					.name = "normal",
 					.load_op = VK_ATTACHMENT_LOAD_OP_CLEAR,
 					.store_op = VK_ATTACHMENT_STORE_OP_STORE,
-					.clear_value = {0.0, 0.0, 0.0, 1.0}
+					.clear_value = {0.0f, 0.0f, 0.0f, 1.0f}
 				},
 				FrameGraph::Output{
 					.name = "depth",
 					.load_op = VK_ATTACHMENT_LOAD_OP_CLEAR,
 					.store_op = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-					.clear_value = {1.0, 1.0, 1.0, 1.0}
+					.clear_value = {1.0f, 1.0f, 1.0f, 1.0f}
 				}
 			},
 			[&](VkCommandBuffer cmd){
@@ -1819,13 +2008,14 @@ int main(int argc, char** argv) {
 				scene->projection[1][1] *= -1;
 
 				scene->view = camera.get_view_matrix();
-				scene->camera_position = glm::vec4(camera.get_position(), 0);
+				scene->camera_position = glm::vec4(camera.get_position(), 0.0f);
 
 				PushConstants push_constants 	= {};
 				push_constants.scene_handle 	= scene.handle();
 				push_constants.light_handle 	= lights.handle();
 
-				sponza.draw(cmd, push_constants);
+				helmet.reset();
+				helmet.draw(cmd, push_constants);
 			}
 		)
 		.add_pass("swapchain_write",
@@ -1864,7 +2054,7 @@ int main(int argc, char** argv) {
 					&push_constants
 				);
 
-				device().cmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines["swapchain_write"]);
+				device().cmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines["swapchain_write"].pipeline);
 				device().cmdDraw(cmd, 3, 1, 0, 0);
 			}
 		)
