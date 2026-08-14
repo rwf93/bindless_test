@@ -23,7 +23,7 @@ FragmentOutput fragment_main(VertexOutput input) {
 
     float3 color = get_texture_2d(constants.swapchain_write_texture_handle).Sample(input.texcoord.xy).rgb;
 
-    color = pow(color, float3(1 / 2.4));
+    color = pow(color, float3(2.2));
 
     output.color = float4(color, 1.0);
     return output;

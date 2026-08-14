@@ -1939,7 +1939,8 @@ int main(int argc, char** argv) {
 	auto scene = SharedBuffer<SceneData>::create(1);
 	auto lights = SharedBuffer<LightData>::create(12);
 
-	auto helmet = Model::create("C:\\Users\\rwf93\\Downloads\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf", pipelines["bindless_framegraph_pbr"]);
+	auto helmet = Model::create("./assets/helmet/DamagedHelmet.gltf", pipelines["bindless_framegraph_pbr"]);
+	auto helmet_unlit = Model::create("./assets/helmet/DamagedHelmet.gltf", pipelines["bindless_framegraph"]);
 
 	lights[0].position = glm::vec4(-10.0f,  10.0f, 10.0f, 1.0f),
 	lights[1].position = glm::vec4( 10.0f,  10.0f, 10.0f, 1.0f),
@@ -2016,6 +2017,11 @@ int main(int argc, char** argv) {
 
 				helmet.reset();
 				helmet.draw(cmd, push_constants);
+				helmet.draw(cmd, push_constants, glm::translate(glm::mat4(1.0f), glm::vec3( 5.0f, 0.0f, 0.0f)));
+				helmet.draw(cmd, push_constants, glm::translate(glm::mat4(1.0f), glm::vec3(-5.0f, 0.0f, 0.0f)));
+
+				helmet_unlit.reset();
+				helmet_unlit.draw(cmd, push_constants, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 5.0f, 0.0f)));
 			}
 		)
 		.add_pass("swapchain_write",

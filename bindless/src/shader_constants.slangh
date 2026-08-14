@@ -64,8 +64,7 @@ Light get_light(uint32_t index) {
     return typed_light[constants.light_handle][index];
 }
 
-// `Material` is intentionally NOT defined here: each shader that consumes
-// materials declares its own `Material` parameter struct together with a
-// `typed_material[]` binding and a `get_material()` helper. The host reflects
-// into the shader's `Material` struct (see MaterialLayout in main.cpp) to lay
-// out the material buffer, so the C++ side never hard-codes material fields.
+#define SHADER_MATERIAL_PARAMS \
+    [vk::binding(0, 0)] StructuredBuffer<Material> typed_material[]; \
+    Material get_material() { return typed_material[constants.material_handle][constants.material]; } \
+    struct Material

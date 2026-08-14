@@ -1,15 +1,8 @@
 #include "shader_constants.slangh"
 
-// This shader's material parameters: just an albedo texture handle.
-struct Material {
+SHADER_MATERIAL_PARAMS {
     uint32_t albedo_handle;
 };
-
-[vk::binding(0, 0)] StructuredBuffer<Material> typed_material[];
-
-Material get_material() {
-    return typed_material[constants.material_handle][constants.material];
-}
 
 struct VertexOutput {
   float4 position : SV_Position;
