@@ -1,0 +1,17 @@
+root = "."
+
+[[mount]]
+alias = "shaders"
+path  = "src"
+
+[[mount]]
+alias = "materials"
+path  = "content/materials"
+
+[[mount]]
+alias = "models"
+path  = "C:\\Users\\rwf93\\Downloads\\glTF-Sample-Models\\2.0"
+
+[[mount]]
+alias = "textures"
+path  = "C:\\Users\\rwf93\\Downloads\\glTF-Sample-Models\\2.0"

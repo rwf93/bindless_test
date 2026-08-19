@@ -39,7 +39,8 @@ target("bindless_test")
         "glm",
         "libsdl3",
         "slang",
-        "fastgltf"
+        "fastgltf",
+        "tomlcpp"
         --"entt"
     )
     add_rules("defaults_rule")

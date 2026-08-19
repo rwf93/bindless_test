@@ -6,7 +6,6 @@ struct PushConstants {
     uint32_t light_handle;
     uint32_t material_handle;
     uint32_t material;
-    uint32_t swapchain_write_texture_handle;
 };
 
 struct VertexData {

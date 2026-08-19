@@ -1,0 +1,2 @@
+pipeline = "bindless_framegraph"
+albedo_handle = "models/DamagedHelmet/glTF/Default_albedo.jpg"

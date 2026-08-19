@@ -90,6 +90,28 @@ float3 fresnelSchlick(float cosTheta, float3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// Convert a 3D direction to an equirectangular UV (used to sample 2D IBL maps
+// in lieu of cubemap descriptors). Texture wraps around on U.
+float2 dir_to_equirect(float3 dir)
+{
+    float2 uv = float2(atan2(-dir.z, dir.x), asin(clamp(dir.y, -1.0, 1.0)));
+    uv *= float2(0.1591, 0.3183);  // (1/(2pi), 1/pi)
+    uv += float2(0.5, 0.5);
+    return uv;
+}
+
+// Analytical fit of the split-sum BRDF LUT (Lazarov / Brice).
+// Returns (scale, bias) for the specular-IBL F0 approximation.
+// Avoids needing to bind a precomputed BRDF LUT texture.
+float2 integrate_brdf(float NdotV, float roughness)
+{
+    const float4 c0 = float4(-1.0, -0.0275, -0.572,  0.0210);
+    const float4 c1 = float4( 1.0,  0.0425,  1.04,  -0.0400);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * NdotV));
+    return float2(-a004 * r.x + r.y, a004 * r.z + r.w);
+}
+
 [shader("vertex")]
 VertexOutput vertex_main(uint vertex_id: SV_VertexID, uint draw_id: SV_VulkanInstanceID) {
     VertexOutput output;
@@ -129,7 +151,9 @@ FragmentOutput fragment_main(VertexOutput input) {
     float metallic = get_texture_2d(material.mrao_handle).Sample(input.texcoord.xy).r;
     float roughness = get_texture_2d(material.mrao_handle).Sample(input.texcoord.xy).g;
     float ao = get_texture_2d(material.mrao_handle).Sample(input.texcoord.xy).b;
-    float3 emission = get_texture_2d(material.emission_handle).Sample(input.texcoord.xy).rgb;
+    float3 emission = material.emission_handle != uint32_t::maxValue
+        ? get_texture_2d(material.emission_handle).Sample(input.texcoord.xy).rgb
+        : float3(0.0);
     float3 normal_map = get_texture_2d(material.normal_handle).Sample(input.texcoord.xy).rgb;
 
     float3 N = normalize(input.normal.xyz);

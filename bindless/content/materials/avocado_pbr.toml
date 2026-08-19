@@ -1,0 +1,6 @@
+pipeline = "bindless_framegraph_pbr"
+albedo_handle     = "models/Avocado/glTF/Avocado_baseColor.png"
+mrao_handle       = "models/Avocado/glTF/Avocado_roughnessMetallic.png"
+normal_handle     = "models/Avocado/glTF/Avocado_normal.png"
+base_color_factor = [1.0, 1.0, 1.0, 1.0]
+

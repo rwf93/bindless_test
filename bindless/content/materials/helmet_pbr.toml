@@ -1,0 +1,6 @@
+pipeline = "bindless_framegraph_pbr"
+albedo_handle    = "models/DamagedHelmet/glTF/Default_albedo.jpg"
+mrao_handle      = "models/DamagedHelmet/glTF/Default_metalRoughness.jpg"
+emission_handle  = "models/DamagedHelmet/glTF/Default_emissive.jpg"
+normal_handle    = "models/DamagedHelmet/glTF/Default_normal.jpg"
+base_color_factor = [1.0, 1.0, 1.0, 1.0]

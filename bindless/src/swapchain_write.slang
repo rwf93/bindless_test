@@ -1,5 +1,11 @@
 #include "shader_constants.slangh"
 
+SHADER_MATERIAL_PARAMS {
+    uint32_t albedo_handle;
+    uint32_t normal_handle;
+    uint32_t depth_handle;
+};
+
 struct VertexOutput {
     float4 position : SV_Position;
     float4 texcoord : TEXCOORD0;
@@ -21,9 +27,10 @@ VertexOutput vertex_main(uint vertex_id: SV_VertexID, uint draw_id: SV_VulkanIns
 FragmentOutput fragment_main(VertexOutput input) {
     FragmentOutput output;
 
-    float3 color = get_texture_2d(constants.swapchain_write_texture_handle).Sample(input.texcoord.xy).rgb;
+    Material material = get_material();
+    float3 color = get_texture_2d(material.albedo_handle).Sample(input.texcoord.xy).rgb;
 
-    color = pow(color, float3(2.2));
+    //color = pow(color, float3(1 / 2.4));
 
     output.color = float4(color, 1.0);
     return output;
