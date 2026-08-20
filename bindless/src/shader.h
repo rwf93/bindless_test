@@ -56,21 +56,51 @@ struct MaterialLayout {
 	static MaterialLayout reflect(SlangProgram &program, const char *struct_name = "Material");
 };
 
-struct PipelineInfo {
-	VkPipeline pipeline = VK_NULL_HANDLE;
-	MaterialLayout material_layout;
+// A compiled graphics pipeline. Owns its VkPipeline handle — destructor
+// destroys it, move-assign destroys the overwritten handle first (RAII,
+// same shape as GPUBuffer<T>::operator=). Immutable after construction;
+// `material_layout` is the reflected Material struct from the shader.
+class Pipeline {
+	struct M {
+		VkPipeline pipeline = VK_NULL_HANDLE;
+		MaterialLayout material_layout;
+	} m;
+
+	explicit Pipeline(M m) : m(std::move(m)) {}
+public:
+	Pipeline() = default;
+	~Pipeline() {
+		if(m.pipeline != VK_NULL_HANDLE)
+			device().destroyPipeline(m.pipeline, nullptr);
+	}
+
+	Pipeline(const Pipeline &) = delete;
+	Pipeline &operator=(const Pipeline &) = delete;
+	Pipeline(Pipeline &&other) noexcept : m(std::move(other.m)) {
+		other.m.pipeline = VK_NULL_HANDLE;
+	}
+	Pipeline &operator=(Pipeline &&other) noexcept {
+		if(this != &other) {
+			if(m.pipeline != VK_NULL_HANDLE)
+				device().destroyPipeline(m.pipeline, nullptr);
+			m = std::move(other.m);
+			other.m.pipeline = VK_NULL_HANDLE;
+		}
+		return *this;
+	}
+
+	static Pipeline create(
+		SlangProgram &program,
+		std::vector<VkFormat> color_attachments,
+		VkFormat depth_format = VK_FORMAT_UNDEFINED,
+		VkCullModeFlagBits cullmode = VK_CULL_MODE_NONE,
+		bool depth_test = true,
+		bool depth_write = true
+	);
+
+	VkPipeline pipeline() const { return m.pipeline; }
+	const MaterialLayout &material_layout() const { return m.material_layout; }
+
+	static std::map<std::string, Pipeline> registry;
+	static void rebuild_all(VFS &vfs);
 };
-
-extern std::map<std::string, PipelineInfo> pipelines;
-
-void create_pipeline(
-	std::string name,
-	SlangProgram &program,
-	std::vector<VkFormat> color_attachments,
-	VkFormat depth_format = VK_FORMAT_UNDEFINED,
-	VkCullModeFlagBits cullmode = VK_CULL_MODE_NONE,
-	bool depth_test = true,
-	bool depth_write = true
-);
-
-void build_pipelines(VFS &vfs);

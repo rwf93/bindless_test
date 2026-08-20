@@ -7,8 +7,8 @@
 
 std::unordered_map<std::string, Material> Material::material_cache;
 
-Material Material::create_impl(PipelineInfo &pipeline, const MaterialParam *params, size_t count) {
-	auto &layout = pipeline.material_layout;
+Material Material::create_impl(Pipeline &pipeline, const MaterialParam *params, size_t count) {
+	auto &layout = pipeline.material_layout();
 	if(!layout.valid())
 		spdlog::error("Material::create: pipeline has no valid Material layout");
 
@@ -48,18 +48,12 @@ Material Material::create_impl(PipelineInfo &pipeline, const MaterialParam *para
 	});
 }
 
-Material &Material::load_toml(VFS &vfs, const std::string &path) {
-	auto key = path;
-	auto it = material_cache.find(key);
-	if(it != material_cache.end())
-		return it->second;
-
+Material Material::create_from_toml(VFS &vfs, const std::string &path) {
 	auto resolved = vfs.resolve(path);
 	auto result = toml::parseFile(resolved.string());
 	if(!result.table) {
 		spdlog::error("Material::load_toml: failed to parse '{}': {}", resolved.string(), result.errmsg);
-		static Material empty;
-		return empty;
+		return Material{};
 	}
 
 	auto &root = *result.table;
@@ -67,15 +61,13 @@ Material &Material::load_toml(VFS &vfs, const std::string &path) {
 	auto [has_pipeline, pipeline_name] = root.getString("pipeline");
 	if(!has_pipeline || pipeline_name.empty()) {
 		spdlog::error("Material::load_toml: no 'pipeline' key in '{}'", resolved.string());
-		static Material empty;
-		return empty;
+		return Material{};
 	}
 
-	auto pit = pipelines.find(pipeline_name);
-	if(pit == pipelines.end()) {
+	auto pit = Pipeline::registry.find(pipeline_name);
+	if(pit == Pipeline::registry.end()) {
 		spdlog::error("Material::load_toml: pipeline '{}' not found", pipeline_name);
-		static Material empty;
-		return empty;
+		return Material{};
 	}
 
 	auto toml_dir = resolved.parent_path();
@@ -86,6 +78,18 @@ Material &Material::load_toml(VFS &vfs, const std::string &path) {
 
 		auto [has_str, str_val] = root.getString(key);
 		if(has_str) {
+			// @-prefix: named texture reference (e.g. "@color")
+			if(!str_val.empty() && str_val[0] == '@') {
+				std::string res_name = str_val.substr(1);
+				uint32_t handle = Texture2D::find_named(res_name);
+				if(handle != UINT32_MAX) {
+					params.push_back(MaterialParam::tex(key.c_str(), handle));
+					spdlog::info("\t{}.{} = \"@{}\" -> handle {}", path, key, res_name, handle);
+				} else {
+					spdlog::error("\t{}.{} = \"@{}\" named texture not found", path, key, res_name);
+				}
+				continue;
+			}
 			// Resolve texture paths via the injected VFS. Alias paths
 			// (e.g. "models/Foo/bar.png") walk the mount table; absolute
 			// paths pass through. As a last resort, fall back to
@@ -95,7 +99,7 @@ Material &Material::load_toml(VFS &vfs, const std::string &path) {
 				tex_path = toml_dir / str_val;
 			uint32_t handle = Texture2D::load_cached(tex_path);
 			params.push_back(MaterialParam::tex(key.c_str(), handle));
-			spdlog::info("  {}.{} = \"{}\" -> handle {}", path, key, str_val, handle);
+			spdlog::info("\t{}.{} = \"{}\" -> handle {}", path, key, str_val, handle);
 			continue;
 		}
 
@@ -103,7 +107,7 @@ Material &Material::load_toml(VFS &vfs, const std::string &path) {
 		if(has_dbl) {
 			float f = float(dbl_val);
 			params.push_back(MaterialParam::raw(key.c_str(), &f, sizeof(f)));
-			spdlog::info("  {}.{} = {}", path, key, f);
+			spdlog::info("\t{}.{} = {}", path, key, f);
 			continue;
 		}
 
@@ -115,14 +119,27 @@ Material &Material::load_toml(VFS &vfs, const std::string &path) {
 				if(ok) floats.push_back(float(val));
 			}
 			params.push_back(MaterialParam::raw(key.c_str(), floats.data(), floats.size() * sizeof(float)));
-			spdlog::info("  {}.{} = [{} float(s)]", path, key, floats.size());
+			spdlog::info("\t{}.{} = [{} float(s)]", path, key, floats.size());
 			continue;
 		}
 
-		spdlog::warn("  {}.{} has unsupported value type, skipping", path, key);
+		spdlog::warn("\t{}.{} has unsupported value type, skipping", path, key);
 	}
 
-	auto mat = Material::create(pit->second, params);
 	spdlog::info("Material::load_toml: loaded '{}' (pipeline '{}')", path, pipeline_name);
-	return material_cache.emplace(std::move(key), std::move(mat)).first->second;
+	return Material::create(pit->second, params);
+}
+
+Material &Material::load_toml(VFS &vfs, const std::string &path) {
+	auto it = material_cache.find(path);
+	if(it != material_cache.end())
+		return it->second;
+
+	auto mat = create_from_toml(vfs, path);
+	return material_cache.emplace(path, std::move(mat)).first->second;
+}
+
+void Material::reload_all(VFS &vfs) {
+	for(auto &[path, mat] : material_cache)
+		mat = create_from_toml(vfs, path);
 }

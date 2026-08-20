@@ -38,25 +38,30 @@ int main(int argc, char** argv) {
 
 	create_vk_shit();
 	auto vfs = VFS::create("C:\\Users\\rwf93\\Desktop\\bindless_test\\bindless\\vfs.toml");
-	build_pipelines(vfs);
+	Pipeline::rebuild_all(vfs);
 	create_imgui_shit();
 
-	std::vector<Texture2D> color_targets;
-	std::vector<Texture2D> normal_targets;
-	std::vector<Texture2D> depth_targets;
-	for(uint32_t i = 0; i < vkctx.max_frames; i++) {
-		color_targets.emplace_back(with_result_of([&] {
-			return Texture2D::create_empty(1600, 900, VK_FORMAT_R16G16B16A16_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
-		}));
+	auto color = Texture2D::create_empty(
+		1600, 900,
+		VK_FORMAT_R16G16B16A16_UNORM,
+		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		"gbuffer_albedo"
+	);
 
-		normal_targets.emplace_back(with_result_of([&] {
-			return Texture2D::create_empty(1600, 900, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
-		}));
+	auto normal = Texture2D::create_empty(
+		1600, 900,
+		VK_FORMAT_R8G8B8A8_UNORM,
+		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		"gbuffer_normal"
+	);
 
-		depth_targets.emplace_back(with_result_of([&] {
-			return Texture2D::create_empty(1600, 900, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
-		}));
-	}
+	auto depth = Texture2D::create_empty(
+		1600,
+		900,
+		VK_FORMAT_D32_SFLOAT,
+		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		"depth"
+	);
 
 	auto shadowmap = Texture2D::create_empty(
 		1024,
@@ -79,17 +84,7 @@ int main(int argc, char** argv) {
 	auto &avocado_unlit = Material::load_toml(vfs, "materials/avocado_unlit.toml");
 	auto &avocado_pbr = Material::load_toml(vfs, "materials/avocado_pbr.toml");
 
-	std::vector<Material> swapchain_write_materials;
-	swapchain_write_materials.reserve(vkctx.max_frames);
-	for(uint32_t i = 0; i < vkctx.max_frames; i++) {
-		swapchain_write_materials.push_back(Material::create(pipelines["swapchain_write"],
-			{
-				MaterialParam::tex("albedo_handle", color_targets[i].handle()),
-				MaterialParam::tex("normal_handle", normal_targets[i].handle()),
-				MaterialParam::tex("depth_handle",  depth_targets[i].handle())
-			}
-		));
-	}
+	auto &swapchain_write_material = Material::load_toml(vfs, "materials/swapchain_write.toml");
 
 	lights[0].position = glm::vec4(-10.0f,  10.0f, 10.0f, 1.0f),
 	lights[1].position = glm::vec4( 10.0f,  10.0f, 10.0f, 1.0f),
@@ -102,9 +97,9 @@ int main(int argc, char** argv) {
 	lights[3].color = glm::vec4(300, 300, 300, 255);
 
 	auto framegraph = FrameGraph::create()
-		.add_resource("color",  	VK_FORMAT_R16G16B16A16_UNORM, 	VkExtent2D{1600, 900})
-		.add_resource("normal", 	VK_FORMAT_R8G8B8A8_UNORM,    	VkExtent2D{1600, 900})
-		.add_resource("depth",  	VK_FORMAT_D32_SFLOAT,        	VkExtent2D{1600, 900})
+		.add_resource("color",  	color.image(),  VK_FORMAT_R16G16B16A16_UNORM, VkExtent2D{1600, 900})
+		.add_resource("normal", 	normal.image(), VK_FORMAT_R8G8B8A8_UNORM,     VkExtent2D{1600, 900})
+		.add_resource("depth",  	depth.image(),  VK_FORMAT_D32_SFLOAT,         VkExtent2D{1600, 900})
 		.add_resource("swapchain", 	VK_FORMAT_B8G8R8A8_UNORM, 		VkExtent2D{1600, 900})
 		.add_render_pass("skybox",
 			{},
@@ -121,7 +116,7 @@ int main(int argc, char** argv) {
 				push_constants.scene_handle 	= scene.handle();
 				push_constants.light_handle 	= lights.handle();
 
-				ctx.bind_pipeline(pipelines["skybox"].pipeline);
+				ctx.bind_pipeline(Pipeline::registry["skybox"].pipeline());
 				ctx.push_constants(VK_SHADER_STAGE_ALL, &push_constants, sizeof(PushConstants));
 				ctx.draw(3);
 			}
@@ -170,7 +165,7 @@ int main(int argc, char** argv) {
 				helmet.draw(ctx, push_constants, helmet_unlit,   glm::translate(glm::mat4(1.0f), glm::vec3(-5.0f, 0.0f, 0.0f)));
 
 				avocado.reset();
-				avocado.draw(ctx, push_constants, avocado_pbr, glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 5.0, 0.0f)));
+				avocado.draw(ctx, push_constants, avocado_unlit, glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 5.0, 0.0f)));
 			}
 		)
 		.add_render_pass("swapchain_write",
@@ -200,7 +195,7 @@ int main(int argc, char** argv) {
 				push_constants.scene_handle 					= scene.handle();
 				push_constants.object_handle 					= UINT32_MAX;
 
-				swapchain_write_materials[frame_index].bind(ctx, push_constants);
+				swapchain_write_material.bind(ctx, push_constants);
 				ctx.push_constants(VK_SHADER_STAGE_ALL, &push_constants, sizeof(PushConstants));
 				ctx.draw(3);
 			}
@@ -236,8 +231,10 @@ int main(int argc, char** argv) {
 			ImGui_ImplSDL3_ProcessEvent(&event);
 
 			if(event.type == SDL_EVENT_KEY_DOWN)
-				if(event.key.key == SDLK_F4)
-					build_pipelines(vfs);
+				if(event.key.key == SDLK_F4) {
+					Pipeline::rebuild_all(vfs);
+					Material::reload_all(vfs);
+				}
 		}
 		camera.update();
 
@@ -291,9 +288,6 @@ int main(int argc, char** argv) {
 		);
 
 		framegraph
-			.update_resource("color",  color_targets[frame_index].image())
-			.update_resource("normal", normal_targets[frame_index].image())
-			.update_resource("depth",  depth_targets[frame_index].image())
 			.update_resource("swapchain", {vkctx.swapchain_images[image_index], vkctx.swapchain_views[image_index]})
 			.execute(vkctx.frames[frame_index].buffer);
 

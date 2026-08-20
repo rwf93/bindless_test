@@ -1,0 +1,6 @@
+name = "skybox"
+shader = "shaders/skybox.slang"
+attachments = ["R16G16B16A16_UNORM"]
+depth = "D32_SFLOAT"
+depth_test = false
+depth_write = false

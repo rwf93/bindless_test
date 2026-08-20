@@ -1,2 +1,2 @@
-pipeline = "bindless_framegraph"
+pipeline = "unlit"
 albedo_handle = "models/Avocado/glTF/Avocado_baseColor.png"

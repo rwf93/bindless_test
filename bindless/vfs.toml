@@ -2,11 +2,15 @@ root = "."
 
 [[mount]]
 alias = "shaders"
-path  = "src"
+path  = "content/shaders"
 
 [[mount]]
 alias = "materials"
 path  = "content/materials"
+
+[[mount]]
+alias = "pipelines"
+path  = "content/pipelines"
 
 [[mount]]
 alias = "models"

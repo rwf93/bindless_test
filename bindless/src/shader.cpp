@@ -1,12 +1,46 @@
 #include <spdlog/spdlog.h>
+#include <tomlcpp.hpp>
 #include <cstring>
 #include <array>
+#include <algorithm>
+#include <filesystem>
+#include <unordered_map>
 
 #include "shader.h"
 #include "vktools.h"
 #include "vfs.h"
 
-std::map<std::string, PipelineInfo> pipelines;
+std::map<std::string, Pipeline> Pipeline::registry;
+
+static VkFormat parse_format(const std::string &s) {
+	static const std::unordered_map<std::string, VkFormat> map = {
+		{"R8G8B8A8_UNORM",         VK_FORMAT_R8G8B8A8_UNORM},
+		{"R8G8B8A8_SRGB",          VK_FORMAT_R8G8B8A8_SRGB},
+		{"B8G8R8A8_UNORM",         VK_FORMAT_B8G8R8A8_UNORM},
+		{"B8G8R8A8_SRGB",          VK_FORMAT_B8G8R8A8_SRGB},
+		{"R16G16B16A16_UNORM",     VK_FORMAT_R16G16B16A16_UNORM},
+		{"R16G16B16A16_SFLOAT",    VK_FORMAT_R16G16B16A16_SFLOAT},
+		{"R32G32B32A32_SFLOAT",    VK_FORMAT_R32G32B32A32_SFLOAT},
+		{"D16_UNORM",              VK_FORMAT_D16_UNORM},
+		{"D32_SFLOAT",             VK_FORMAT_D32_SFLOAT},
+		{"D24_UNORM_S8_UINT",      VK_FORMAT_D24_UNORM_S8_UINT},
+	};
+	auto it = map.find(s);
+	if(it == map.end()) {
+		spdlog::error("Pipeline: unknown format '{}'", s);
+		return VK_FORMAT_UNDEFINED;
+	}
+	return it->second;
+}
+
+static VkCullModeFlagBits parse_cull(const std::string &s) {
+	if(s == "back")  return VK_CULL_MODE_BACK_BIT;
+	if(s == "front") return VK_CULL_MODE_FRONT_BIT;
+	if(s == "both") return VK_CULL_MODE_FRONT_AND_BACK;
+	if(s == "none")  return VK_CULL_MODE_NONE;
+	spdlog::error("Pipeline: unknown cull mode '{}', defaulting to none", s);
+	return VK_CULL_MODE_NONE;
+}
 
 SlangProgram SlangProgram::create(const char *name, std::string path) {
 	if(!M::global_session.get())
@@ -120,7 +154,7 @@ MaterialLayout MaterialLayout::reflect(SlangProgram &program, const char *struct
 
 		spdlog::info("reflected Material layout: stride={} fields={}", layout.stride, layout.fields.size());
 		for(const auto &f : layout.fields)
-			spdlog::info("  Material field '{}' @ offset {} ({} bytes)", f.name, f.offset, f.size);
+			spdlog::info("\tMaterial field '{}' @ offset {} ({} bytes)", f.name, f.offset, f.size);
 
 		return layout;
 	}
@@ -128,8 +162,7 @@ MaterialLayout MaterialLayout::reflect(SlangProgram &program, const char *struct
 	return layout; // shader declares no Material struct
 }
 
-void create_pipeline(
-	std::string name,
+Pipeline Pipeline::create(
 	SlangProgram &program,
 	std::vector<VkFormat> color_attachments,
 	VkFormat depth_format,
@@ -251,75 +284,83 @@ void create_pipeline(
 	VkPipeline pipeline;
 	VK_CHECK(device().createGraphicsPipelines(VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline));
 
-	pipelines[name] = PipelineInfo {
+	device().destroyShaderModule(shader_module, nullptr);
+
+	return Pipeline(M{
 		.pipeline = pipeline,
 		.material_layout = MaterialLayout::reflect(program)
-	};
+	});
 }
 
-void build_pipelines(VFS &vfs) {
-	for(auto &pipeline : pipelines) {
-		if(pipeline.second.pipeline != VK_NULL_HANDLE) {
-			device().deviceWaitIdle();
-			device().destroyPipeline(pipeline.second.pipeline, nullptr);
+// Parse a single pipeline TOML and insert into the registry. Returns true
+// on success. Internal helper for rebuild_all().
+static bool load_pipeline_toml(VFS &vfs, const std::filesystem::path &toml_path) {
+	auto result = toml::parseFile(toml_path.string());
+	if(!result.table) {
+		spdlog::error("Pipeline: failed to parse '{}': {}", toml_path.string(), result.errmsg);
+		return false;
+	}
+	auto &root = *result.table;
+
+	auto [has_name, name] = root.getString("name");
+	if(!has_name || name.empty()) {
+		spdlog::error("Pipeline: missing 'name' in '{}'", toml_path.string());
+		return false;
+	}
+
+	auto [has_shader, shader_path] = root.getString("shader");
+	if(!has_shader || shader_path.empty()) {
+		spdlog::error("Pipeline: missing 'shader' in '{}'", toml_path.string());
+		return false;
+	}
+
+	std::vector<VkFormat> attachments;
+	if(auto arr = root.getArray("attachments")) {
+		if(auto sv = arr->getStringVector()) {
+			for(const auto &s : *sv)
+				attachments.push_back(parse_format(s));
 		}
 	}
 
-	auto bindless = SlangProgram::create(
-		"bindless",
-		vfs.resolve_string("shaders/bindless.slang")
-	);
+	VkFormat depth = VK_FORMAT_UNDEFINED;
+	if(auto [has_depth, depth_str] = root.getString("depth"); has_depth)
+		depth = parse_format(depth_str);
 
-	auto bindless_pbr = SlangProgram::create(
-		"bindless_pbr",
-		vfs.resolve_string("shaders/bindless_pbr.slang")
-	);
+	VkCullModeFlagBits cull = VK_CULL_MODE_NONE;
+	if(auto [has_cull, cull_str] = root.getString("cull"); has_cull)
+		cull = parse_cull(cull_str);
 
-	auto shadow = SlangProgram::create(
-		"shadow",
-		vfs.resolve_string("shaders/shadow.slang")
-	);
+	bool depth_test = true, depth_write = true;
+	if(auto [has_dt, dt] = root.getBool("depth_test"); has_dt)  depth_test  = dt;
+	if(auto [has_dw, dw] = root.getBool("depth_write"); has_dw) depth_write = dw;
 
-	auto swapchain_write = SlangProgram::create(
-		"swapchain_write",
-		vfs.resolve_string("shaders/swapchain_write.slang")
-	);
+	auto program = SlangProgram::create(name.c_str(), vfs.resolve_string(shader_path));
+	Pipeline::registry[name] = Pipeline::create(program, attachments, depth, cull, depth_test, depth_write);
+	spdlog::info("Pipeline: registered '{}' (shader: {}, {} color attachment(s))",
+		name, shader_path, attachments.size());
+	return true;
+}
 
-	auto skybox = SlangProgram::create(
-		"skybox",
-		vfs.resolve_string("shaders/skybox.slang")
-	);
+void Pipeline::rebuild_all(VFS &vfs) {
+	device().deviceWaitIdle();
+	registry.clear();
 
-	create_pipeline(
-		"bindless_framegraph",
-		bindless,
-		{ VK_FORMAT_R16G16B16A16_UNORM, VK_FORMAT_R8G8B8A8_UNORM }, VK_FORMAT_D32_SFLOAT
-	);
+	auto pipelines_dir = vfs.resolve("pipelines");
+	if(!std::filesystem::exists(pipelines_dir)) {
+		spdlog::error("Pipeline::rebuild_all: pipelines directory not found: {}",
+			pipelines_dir.string());
+		return;
+	}
 
-	create_pipeline(
-		"bindless_framegraph_pbr",
-		bindless_pbr,
-		{ VK_FORMAT_R16G16B16A16_UNORM, VK_FORMAT_R8G8B8A8_UNORM }, VK_FORMAT_D32_SFLOAT,
-		VK_CULL_MODE_BACK_BIT
-	);
+	std::vector<std::filesystem::path> toml_files;
+	for(auto &entry : std::filesystem::directory_iterator(pipelines_dir))
+		if(entry.is_regular_file() && entry.path().extension() == ".toml")
+			toml_files.push_back(entry.path());
+	std::sort(toml_files.begin(), toml_files.end());
 
-	create_pipeline(
-		"shadow",
-		shadow,
-		{}, VK_FORMAT_D32_SFLOAT
-	);
-
-	create_pipeline(
-		"swapchain_write",
-		swapchain_write,
-		{ VK_FORMAT_B8G8R8A8_UNORM }
-	);
-
-	create_pipeline(
-		"skybox",
-		skybox,
-		{ VK_FORMAT_R16G16B16A16_UNORM }, VK_FORMAT_D32_SFLOAT,
-		VK_CULL_MODE_NONE,
-		false, false
-	);
+	size_t ok = 0;
+	for(const auto &path : toml_files)
+		if(load_pipeline_toml(vfs, path)) ok++;
+	spdlog::info("Pipeline::rebuild_all: {}/{} pipeline(s) registered from '{}'",
+		ok, toml_files.size(), pipelines_dir.string());
 }

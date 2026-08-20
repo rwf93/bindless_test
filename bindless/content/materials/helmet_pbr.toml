@@ -1,4 +1,4 @@
-pipeline = "bindless_framegraph_pbr"
+pipeline = "pbr"
 albedo_handle    = "models/DamagedHelmet/glTF/Default_albedo.jpg"
 mrao_handle      = "models/DamagedHelmet/glTF/Default_metalRoughness.jpg"
 emission_handle  = "models/DamagedHelmet/glTF/Default_emissive.jpg"

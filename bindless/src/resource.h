@@ -38,6 +38,7 @@ class Texture2D {
 		uint32_t handle;
 		uint32_t width;
 		uint32_t height;
+		std::string name;
 	} m;
 
 	explicit Texture2D(M m) : m(std::move(m)) {}
@@ -60,20 +61,21 @@ public:
 	static Texture2D create(uint32_t width, uint32_t height, VkFormat format, std::function<uint32_t(int x, int y)> &&fn);
 	static Texture2D create(uint32_t width, uint32_t height, AllocatedImage image);
 	static Texture2D create_empty(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlagBits usage);
+	static Texture2D create_empty(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlagBits usage, const std::string &name);
 	static Texture2D create(uint32_t width, uint32_t height, VkFormat format, void *data);
 
 	// Load a 4-channel RGBA texture from an image file on disk (stb_image).
 	// Returns an empty Texture2D (handle = UINT32_MAX) if the file can't be loaded.
 	static Texture2D load_file(const std::filesystem::path &path);
 
-	// Path-keyed cache of loaded textures, so multiple materials referencing
-	// the same file share one GPU Texture2D. Mirrors Material::material_cache.
 	static std::unordered_map<std::string, Texture2D> cache;
-
-	// Load `path` through the cache. Returns the bindless handle of the
-	// (possibly already-cached) texture. Failed loads still get a cache
-	// entry (with handle = UINT32_MAX) so we don't re-attempt every frame.
 	static uint32_t load_cached(const std::filesystem::path &path);
+
+	// Named textures: textures created with a name are registered here so
+	// material TOMLs can reference them with "@name" syntax. The name is
+	// also applied as a Vulkan debug label (VK_EXT_debug_utils).
+	static std::unordered_map<std::string, uint32_t> named_cache;
+	static uint32_t find_named(const std::string &name);
 
 	uint32_t handle();
 	AllocatedImage image();

@@ -1,0 +1,4 @@
+name = "shadow"
+shader = "shaders/shadow.slang"
+attachments = []
+depth = "D32_SFLOAT"

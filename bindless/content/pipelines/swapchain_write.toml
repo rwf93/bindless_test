@@ -1,0 +1,3 @@
+name = "swapchain_write"
+shader = "shaders/swapchain_write.slang"
+attachments = ["B8G8R8A8_UNORM"]

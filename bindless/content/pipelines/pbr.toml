@@ -1,0 +1,5 @@
+name = "pbr"
+shader = "shaders/pbr.slang"
+attachments = ["R16G16B16A16_UNORM", "R8G8B8A8_UNORM"]
+depth = "D32_SFLOAT"
+cull = "back"

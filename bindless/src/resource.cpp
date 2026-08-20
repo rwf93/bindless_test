@@ -181,6 +181,29 @@ Texture2D Texture2D::create_empty(uint32_t width, uint32_t height, VkFormat form
 	});
 }
 
+Texture2D Texture2D::create_empty(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlagBits usage, const std::string &name) {
+	auto tex = create_empty(width, height, format, usage);
+	tex.m.name = name;
+
+	VkDebugUtilsObjectNameInfoEXT name_info = {};
+	name_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+	name_info.objectType = VK_OBJECT_TYPE_IMAGE;
+	name_info.objectHandle = (uint64_t)tex.m.image.image;
+	name_info.pObjectName = name.c_str();
+	device().setDebugUtilsObjectNameEXT(&name_info);
+
+	VkDebugUtilsObjectNameInfoEXT view_name_info = {};
+	view_name_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+	view_name_info.objectType = VK_OBJECT_TYPE_IMAGE_VIEW;
+	view_name_info.objectHandle = (uint64_t)tex.m.image.view;
+	view_name_info.pObjectName = name.c_str();
+	device().setDebugUtilsObjectNameEXT(&view_name_info);
+
+	named_cache[name] = tex.m.handle;
+	spdlog::info("Texture2D: named texture '{}' registered (handle {})", name, tex.m.handle);
+	return tex;
+}
+
 Texture2D Texture2D::create(uint32_t width, uint32_t height, VkFormat format, void *data) {
 	auto image_res = create_image(
 		width,
@@ -248,4 +271,14 @@ uint32_t Texture2D::load_cached(const std::filesystem::path &path) {
 	uint32_t handle = tex.handle();
 	cache.emplace(std::move(key), std::move(tex));
 	return handle;
+}
+
+std::unordered_map<std::string, uint32_t> Texture2D::named_cache;
+
+uint32_t Texture2D::find_named(const std::string &name) {
+	auto it = named_cache.find(name);
+	if(it != named_cache.end())
+		return it->second;
+	spdlog::error("Texture2D::find_named: no named texture '{}'", name);
+	return UINT32_MAX;
 }

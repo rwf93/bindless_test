@@ -15,19 +15,23 @@
 // the pipeline — so a draw call only needs the geometry + a Material.
 class Material {
 	struct M {
-		PipelineInfo *pipeline = nullptr;
+		Pipeline *pipeline = nullptr;
 		MaterialBuffer buffer;
 		uint32_t index = 0;
 	} m;
 
 	explicit Material(M m) : m(std::move(m)) {}
 
+	// Parse a TOML material file and build a fresh Material (no cache).
+	// Shared by load_toml (first load) and reload_all (in-place refresh).
+	static Material create_from_toml(VFS &vfs, const std::string &path);
+
 	// Shared body. Both the template (for std::vector<MaterialParam> etc.) and
 	// the initializer_list overload (for braced-init-lists at call sites)
 	// forward to this. A braced-init-list can only deduce to an explicit
 	// std::initializer_list<T> parameter, not a generic Range, so the
 	// overload is required for `Material::create(p, {...})` syntax.
-	static Material create_impl(PipelineInfo &pipeline, const MaterialParam *params, size_t count);
+	static Material create_impl(Pipeline &pipeline, const MaterialParam *params, size_t count);
 public:
 	Material() = default;
 	Material(Material &&) noexcept = default;
@@ -36,10 +40,10 @@ public:
 	Material &operator=(const Material &) = delete;
 
 	template<typename Range>
-	static Material create(PipelineInfo &pipeline, const Range &params) {
+	static Material create(Pipeline &pipeline, const Range &params) {
 		return create_impl(pipeline, params.data(), params.size());
 	}
-	static Material create(PipelineInfo &pipeline, std::initializer_list<MaterialParam> params) {
+	static Material create(Pipeline &pipeline, std::initializer_list<MaterialParam> params) {
 		return create_impl(pipeline, params.begin(), params.size());
 	}
 
@@ -54,9 +58,18 @@ public:
 
 	static Material &load_toml(VFS &vfs, const std::string &path);
 
+	// Re-parse every cached material from disk and move-assign the result
+	// into the existing cache node. Because std::unordered_map nodes are
+	// stable under element modification (no rehash), the `Material &`
+	// references handed out by load_toml stay valid — callers see the
+	// refreshed contents transparently. Also picks up new Pipeline
+	// pointers, so call after Pipeline::rebuild_all() to fix up dangling
+	// pipeline references.
+	static void reload_all(VFS &vfs);
+
 	void bind(VkCommandBuffer cmd, PushConstants &push_constants) {
 		push_constants.material_handle = m.buffer.handle();
 		push_constants.material = m.index;
-		device().cmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m.pipeline->pipeline);
+		device().cmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m.pipeline->pipeline());
 	}
 };
