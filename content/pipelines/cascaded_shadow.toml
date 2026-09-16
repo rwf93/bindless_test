@@ -1,4 +1,4 @@
-shader = "shaders/shadow.slang"
+shader = "shaders/cascaded_shadow.slang"
 attachments = []
 depth = "D16_UNORM"
 cull = "front"

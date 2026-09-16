@@ -416,7 +416,7 @@ int main(int argc, char** argv) {
 
 				PushConstants push_constants = {};
 				push_constants.scene_handle = scene.handle();
-				auto &shadow_pipeline = pipelines.at("shadow");
+				auto &shadow_pipeline = pipelines.at("cascaded_shadow");
 				scene_renderer.draw_cascaded_shadows(
 					ctx,
 					push_constants,
