@@ -1,0 +1,5 @@
+shader = "shaders/unlit.slang"
+attachments = ["R16G16B16A16_SFLOAT"]
+depth = "D32_SFLOAT"
+depth_write = false
+depth_compare = "equal"

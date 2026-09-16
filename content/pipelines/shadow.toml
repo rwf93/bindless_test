@@ -1,0 +1,4 @@
+shader = "shaders/shadow.slang"
+attachments = []
+depth = "D16_UNORM"
+cull = "front"

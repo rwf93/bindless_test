@@ -1,0 +1,5 @@
+pipeline = "skybox"
+albedo_handle = { path = "builtin/derelict_airfield_02_8k.hdr", color_space = "linear" }
+hdri_enabled = 1
+hdri_intensity = 0.5
+hdri_rotation_degrees = 0.0

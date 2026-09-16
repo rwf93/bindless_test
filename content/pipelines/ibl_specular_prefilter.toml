@@ -1,0 +1,2 @@
+type = "compute"
+shader = "shaders/ibl_specular_prefilter.slang"

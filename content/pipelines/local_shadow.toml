@@ -1,0 +1,5 @@
+shader = "shaders/local_shadow.slang"
+attachments = []
+depth = "D32_SFLOAT"
+cull = "none"
+pipeline = "local_shadow"

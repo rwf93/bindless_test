@@ -1,0 +1,4 @@
+# Generated from glTF material 2.
+pipeline = "pbr"
+albedo_handle = { path = "../textures/image_68.png", color_space = "srgb" }
+base_color_factor = [0.588, 0.588, 0.588, 1.0]

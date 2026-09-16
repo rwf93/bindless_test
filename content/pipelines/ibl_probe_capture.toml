@@ -1,0 +1,7 @@
+shader = "shaders/ibl_probe_capture.slang"
+attachments = ["R16G16B16A16_SFLOAT"]
+depth = "D32_SFLOAT"
+cull = "none"
+depth_test = true
+depth_write = true
+depth_compare = "less"

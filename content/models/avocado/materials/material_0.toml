@@ -1,0 +1,6 @@
+# Generated from glTF material 0.
+pipeline = "pbr"
+albedo_handle = { path = "../textures/image_0.png", color_space = "srgb" }
+mrao_handle = { path = "../textures/mrao_0.png", color_space = "linear" }
+normal_handle = { path = "../textures/image_2.png", color_space = "linear" }
+base_color_factor = [1.0, 1.0, 1.0, 1.0]

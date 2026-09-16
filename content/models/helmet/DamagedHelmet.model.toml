@@ -1,0 +1,7 @@
+# Generated material sidecar for DamagedHelmet.gltf.
+source = "./DamagedHelmet.gltf"
+material_roots = ["./materials"]
+default_material = "./materials/default_material.toml"
+
+[material_overrides]
+"Material_MR" = "./materials/material_0.toml"

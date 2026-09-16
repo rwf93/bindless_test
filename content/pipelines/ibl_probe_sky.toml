@@ -1,0 +1,6 @@
+shader = "shaders/ibl_probe_sky.slang"
+attachments = ["R16G16B16A16_SFLOAT"]
+depth = "D32_SFLOAT"
+cull = "none"
+depth_test = false
+depth_write = false

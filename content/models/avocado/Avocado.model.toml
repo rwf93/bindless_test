@@ -1,0 +1,7 @@
+# Generated material sidecar for Avocado.gltf.
+source = "./Avocado.gltf"
+material_roots = ["./materials"]
+default_material = "./materials/default_material.toml"
+
+[material_overrides]
+"2256_Avocado_d" = "./materials/material_0.toml"

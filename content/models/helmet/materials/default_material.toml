@@ -1,0 +1,5 @@
+# Used by primitives without a glTF material.
+pipeline = "pbr"
+albedo_handle = "@white"
+mrao_handle = "@white"
+base_color_factor = [1.0, 1.0, 1.0, 1.0]

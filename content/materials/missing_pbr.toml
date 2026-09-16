@@ -1,0 +1,5 @@
+pipeline = "pbr"
+albedo_handle    = "@missing"
+mrao_handle      = "@missing"
+normal_handle    = "@missing"
+base_color_factor = [1.0, 1.0, 1.0, 1.0]

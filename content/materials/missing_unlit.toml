@@ -1,0 +1,2 @@
+pipeline = "unlit"
+albedo_handle = "@missing"

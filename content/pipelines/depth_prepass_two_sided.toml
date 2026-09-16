@@ -1,0 +1,7 @@
+shader = "shaders/depth_prepass.slang"
+attachments = []
+depth = "D32_SFLOAT"
+cull = "none"
+depth_test = true
+depth_write = true
+depth_compare = "less"

@@ -1,0 +1,2 @@
+type = "compute"
+shader = "shaders/compute_write.slang"

@@ -1,0 +1,2 @@
+pipeline = "swapchain_write"
+albedo_handle = "@gbuffer_albedo"

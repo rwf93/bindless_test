@@ -1,0 +1,6 @@
+shader = "shaders/pbr.slang"
+attachments = ["R16G16B16A16_SFLOAT"]
+depth = "D32_SFLOAT"
+cull = "back"
+depth_write = false
+depth_compare = "equal"
