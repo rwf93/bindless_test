@@ -6,9 +6,12 @@
 #include <cstdint>
 #include <utility>
 
+#include "gfx/rendering.h"
+
 namespace gfx {
 
 class Device;
+class Pipeline;
 
 class CommandList {
 	struct M {
@@ -34,9 +37,8 @@ public:
 
 	VkCommandBuffer native() const { return m.command; }
 
-	void push_constants(const void *data, size_t size) const;
-	void push_handle(uint32_t handle, uint32_t offset = 0) const;
-	void bind_pipeline(VkPipeline pipeline) const;
+	void set_root_data(const void *data, size_t size) const;
+	void set_pipeline(const Pipeline &pipeline) const;
 	void draw(
 		uint32_t vertex_count,
 		uint32_t instance_count = 1,
@@ -49,7 +51,7 @@ public:
 		uint32_t group_count_z = 1
 	) const;
 	void viewport(uint32_t width, uint32_t height) const;
-	void begin_rendering(const VkRenderingInfo &rendering) const;
+	void begin_rendering(const RenderingDesc &rendering) const;
 	void end_rendering() const;
 	void transition(
 		VkImage image,

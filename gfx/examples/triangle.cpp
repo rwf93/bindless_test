@@ -2,6 +2,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <span>
 #include <stdexcept>
 
 #include <SDL3/SDL.h>
@@ -135,31 +136,26 @@ int run() {
 			VK_IMAGE_ASPECT_COLOR_BIT
 		);
 
-		VkClearValue clear = {};
-		clear.color.float32[0] = 0.025f;
-		clear.color.float32[1] = 0.035f;
-		clear.color.float32[2] = 0.055f;
-		clear.color.float32[3] = 1.0f;
-		VkRenderingAttachmentInfo color = {};
-		color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-		color.imageView = target.view;
-		color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-		color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-		color.clearValue = clear;
-		VkRenderingInfo rendering = {};
-		rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-		rendering.renderArea.extent = presentation.extent();
-		rendering.layerCount = 1;
-		rendering.colorAttachmentCount = 1;
-		rendering.pColorAttachments = &color;
+		const gfx::RenderingAttachment color{
+			.image = target,
+			.load = gfx::LoadOp::Clear,
+			.store = gfx::StoreOp::Store,
+			.clear = {
+				.color = {0.025f, 0.035f, 0.055f, 1.0f},
+			},
+		};
+		const gfx::RenderingDesc rendering{
+			.width = presentation.extent().width,
+			.height = presentation.extent().height,
+			.colors = std::span<const gfx::RenderingAttachment>(&color, 1),
+		};
 
 		commands.begin_rendering(rendering);
 		commands.viewport(
 			presentation.extent().width,
 			presentation.extent().height
 		);
-		commands.bind_pipeline(pipeline.pipeline());
+		commands.set_pipeline(pipeline);
 		commands.draw(3);
 		commands.end_rendering();
 		commands.transition(

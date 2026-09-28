@@ -1,10 +1,14 @@
 #include "gfx/command_list.h"
 
+#include <stdexcept>
+#include <vector>
+
 #include "gfx/device.h"
+#include "gfx/pipeline.h"
 
 namespace gfx {
 
-void CommandList::push_constants(
+void CommandList::set_root_data(
 	const void *data,
 	size_t size
 ) const {
@@ -18,21 +22,12 @@ void CommandList::push_constants(
 	);
 }
 
-void CommandList::push_handle(uint32_t handle, uint32_t offset) const {
-	struct { uint32_t handle; uint32_t offset; } constants = { handle, offset };
-
-	m.device->dispatch().cmdPushConstants(
+void CommandList::set_pipeline(const Pipeline &pipeline) const {
+	m.device->dispatch().cmdBindPipeline(
 		m.command,
-		m.device->pipeline_layout(),
-		VK_SHADER_STAGE_ALL,
-		0,
-		sizeof(constants),
-		&constants
+		m.bind_point,
+		pipeline.native()
 	);
-}
-
-void CommandList::bind_pipeline(VkPipeline pipeline) const {
-	m.device->dispatch().cmdBindPipeline(m.command, m.bind_point, pipeline);
 	const VkDescriptorSet descriptor_set = m.device->descriptor_set();
 	m.device->dispatch().cmdBindDescriptorSets(
 		m.command,
@@ -88,8 +83,63 @@ void CommandList::viewport(uint32_t width, uint32_t height) const {
 	m.device->dispatch().cmdSetViewport(m.command, 0, 1, &viewport);
 }
 
-void CommandList::begin_rendering(const VkRenderingInfo &rendering) const {
-	m.device->dispatch().cmdBeginRendering(m.command, &rendering);
+void CommandList::begin_rendering(const RenderingDesc &rendering) const {
+	if(rendering.width == 0 || rendering.height == 0 || rendering.layer_count == 0)
+		throw std::invalid_argument("CommandList::begin_rendering: invalid render area");
+
+	std::vector<VkRenderingAttachmentInfo> colors;
+	colors.reserve(rendering.colors.size());
+	for(const RenderingAttachment &attachment : rendering.colors) {
+		if(!attachment.image.valid())
+			throw std::invalid_argument("CommandList::begin_rendering: invalid color attachment");
+
+		VkRenderingAttachmentInfo info = {};
+		info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+		info.imageView = attachment.image.view;
+		info.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		info.loadOp = attachment.load == LoadOp::Load
+			? VK_ATTACHMENT_LOAD_OP_LOAD
+			: attachment.load == LoadOp::Clear
+				? VK_ATTACHMENT_LOAD_OP_CLEAR
+				: VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		info.storeOp = attachment.store == StoreOp::Store
+			? VK_ATTACHMENT_STORE_OP_STORE
+			: VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		info.clearValue.color.float32[0] = attachment.clear.color[0];
+		info.clearValue.color.float32[1] = attachment.clear.color[1];
+		info.clearValue.color.float32[2] = attachment.clear.color[2];
+		info.clearValue.color.float32[3] = attachment.clear.color[3];
+		colors.push_back(info);
+	}
+
+	VkRenderingAttachmentInfo depth = {};
+	if(rendering.depth) {
+		if(!rendering.depth->image.valid())
+			throw std::invalid_argument("CommandList::begin_rendering: invalid depth attachment");
+
+		depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+		depth.imageView = rendering.depth->image.view;
+		depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+		depth.loadOp = rendering.depth->load == LoadOp::Load
+			? VK_ATTACHMENT_LOAD_OP_LOAD
+			: rendering.depth->load == LoadOp::Clear
+				? VK_ATTACHMENT_LOAD_OP_CLEAR
+				: VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		depth.storeOp = rendering.depth->store == StoreOp::Store
+			? VK_ATTACHMENT_STORE_OP_STORE
+			: VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		depth.clearValue.depthStencil.depth = rendering.depth->clear.depth;
+		depth.clearValue.depthStencil.stencil = rendering.depth->clear.stencil;
+	}
+
+	VkRenderingInfo info = {};
+	info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+	info.renderArea.extent = {rendering.width, rendering.height};
+	info.layerCount = rendering.layer_count;
+	info.colorAttachmentCount = uint32_t(colors.size());
+	info.pColorAttachments = colors.data();
+	info.pDepthAttachment = rendering.depth ? &depth : nullptr;
+	m.device->dispatch().cmdBeginRendering(m.command, &info);
 }
 
 void CommandList::end_rendering() const {

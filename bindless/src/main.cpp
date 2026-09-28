@@ -387,16 +387,16 @@ int run() {
 	auto &color = textures.create<gfx::Texture2D>(gfx::Texture2DDesc{
 		.width = APP_WIDTH,
 		.height = APP_HEIGHT,
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		.format = gfx::Format::R16G16B16A16Float,
+		.usage = gfx::TextureUsage::ColorAttachment,
 		.name = "gbuffer_albedo",
 	});
 
 	auto &depth = textures.create<gfx::Texture2D>(gfx::Texture2DDesc{
 		.width = APP_WIDTH,
 		.height = APP_HEIGHT,
-		.format = VK_FORMAT_D32_SFLOAT,
-		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.format = gfx::Format::D32Float,
+		.usage = gfx::TextureUsage::DepthStencilAttachment,
 		.name = "depth",
 	});
 
@@ -404,8 +404,8 @@ int run() {
 		.width = SHADOW_MAP_RESOLUTION,
 		.height = SHADOW_MAP_RESOLUTION,
 		.layer_count = SHADOW_CASCADE_COUNT,
-		.format = VK_FORMAT_D16_UNORM,
-		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.format = gfx::Format::D16Unorm,
+		.usage = gfx::TextureUsage::DepthStencilAttachment,
 		.name = "cascaded_shadowmap",
 	});
 
@@ -413,8 +413,8 @@ int run() {
 		.width = LOCAL_SHADOW_MAP_RESOLUTION,
 		.height = LOCAL_SHADOW_MAP_RESOLUTION,
 		.layer_count = LIGHT_COUNT * LOCAL_SHADOW_FACE_COUNT,
-		.format = VK_FORMAT_D32_SFLOAT,
-		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.format = gfx::Format::D32Float,
+		.usage = gfx::TextureUsage::DepthStencilAttachment,
 		.name = "local_shadowmap",
 	});
 
@@ -550,7 +550,7 @@ int run() {
 					push_constants,
 					pipelines.at("ibl_probe_sky")
 				);
-				ctx.push_constants(
+				ctx.set_root_data(
 					&push_constants,
 					sizeof(PushConstants)
 				);
@@ -573,7 +573,7 @@ int run() {
 			},
 			[&, current_probe](gfx::CommandList &ctx) {
 				auto &specular = current_probe->specular();
-				ctx.bind_pipeline(pipelines.at("ibl_specular_prefilter").pipeline());
+				ctx.set_pipeline(pipelines.at("ibl_specular_prefilter"));
 				for(uint32_t mip = 0; mip < specular.mip_count(); ++mip) {
 					const uint32_t resolution = std::max(
 						specular.resolution() >> mip,
@@ -588,7 +588,7 @@ int run() {
 						.roughness = specular.mip_count() > 1 ? float(mip) / float(specular.mip_count() - 1) : 0.0f
 					};
 
-					ctx.push_constants(
+					ctx.set_root_data(
 						&constants,
 						sizeof(constants)
 					);
@@ -620,8 +620,8 @@ int run() {
 				};
 
 
-				ctx.bind_pipeline(pipelines.at("ibl_diffuse_convolution").pipeline());
-				ctx.push_constants(
+				ctx.set_pipeline(pipelines.at("ibl_diffuse_convolution"));
+					ctx.set_root_data(
 					&constants,
 					sizeof(constants)
 				);
@@ -649,8 +649,8 @@ int run() {
 					.sample_count = 128
 				};
 
-				ctx.bind_pipeline(pipelines.at("ibl_brdf_lut").pipeline());
-				ctx.push_constants(
+				ctx.set_pipeline(pipelines.at("ibl_brdf_lut"));
+					ctx.set_root_data(
 					&constants,
 					sizeof(constants)
 				);
@@ -719,7 +719,7 @@ int run() {
 				push_constants.scene_handle = scene.handle();
 
 				skybox_clouds.bind(ctx, push_constants);
-				ctx.push_constants(
+				ctx.set_root_data(
 					&push_constants,
 					sizeof(PushConstants)
 				);
@@ -734,7 +734,7 @@ int run() {
 			[&](gfx::CommandList &ctx){
 				PushConstants push_constants = {};
 				swapchain_write_material.bind(ctx, push_constants);
-				ctx.push_constants(&push_constants, sizeof(PushConstants));
+				ctx.set_root_data(&push_constants, sizeof(PushConstants));
 				ctx.draw(3);
 			}
 		)

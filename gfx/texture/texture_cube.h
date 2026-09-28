@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gfx/image.h"
+#include "gfx/types.h"
 
 namespace gfx {
 
@@ -16,8 +17,8 @@ class Device;
 struct TextureCubeDesc {
 	uint32_t resolution = 0;
 	uint32_t mip_count = 1;
-	VkFormat format = VK_FORMAT_UNDEFINED;
-	VkImageUsageFlags usage = 0;
+	Format format = Format::Undefined;
+	TextureUsage usage = TextureUsage::None;
 	std::string name;
 };
 

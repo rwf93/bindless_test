@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "gfx/device.h"
+#include "gfx/detail/types.h"
 #include "gfx/texture/texture_internal.h"
 
 namespace gfx {
@@ -13,15 +14,15 @@ ImageDesc texture_3d_desc(
 	uint32_t width,
 	uint32_t height,
 	uint32_t depth,
-	VkFormat format,
-	VkImageUsageFlags usage
+	Format format,
+	TextureUsage usage
 ) {
 	return ImageDesc{
 		.image_type = VK_IMAGE_TYPE_3D,
 		.view_type = VK_IMAGE_VIEW_TYPE_3D,
-		.format = format,
+		.format = detail::to_vk_format(format),
 		.extent = {width, height, depth},
-		.usage = usage,
+		.usage = detail::to_vk_image_usage(usage),
 		.flags = VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT,
 	};
 }
@@ -66,8 +67,8 @@ Texture3D Texture3D::create(
 			desc.depth,
 			desc.format,
 			desc.usage |
-				VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-				VK_IMAGE_USAGE_SAMPLED_BIT
+				TextureUsage::TransferDestination |
+				TextureUsage::Sampled
 		),
 		VK_IMAGE_LAYOUT_GENERAL
 	);
@@ -76,7 +77,7 @@ Texture3D Texture3D::create(
 		device,
 		ref,
 		{desc.width, desc.height, desc.depth},
-		desc.format,
+		detail::to_vk_format(desc.format),
 		data,
 		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
 	);
@@ -98,16 +99,14 @@ Texture3D Texture3D::create(Device &device, const Texture3DDesc &desc) {
 			desc.height,
 			desc.depth,
 			desc.format,
-			desc.usage | VK_IMAGE_USAGE_SAMPLED_BIT
+			desc.usage | TextureUsage::Sampled
 		),
 		VK_IMAGE_LAYOUT_GENERAL
 	);
 	const ImageRef ref = image.ref();
 	ImageRef attachment;
-	if(desc.usage & (
-		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
-	)) {
+	if(has_usage(desc.usage, TextureUsage::ColorAttachment) ||
+		has_usage(desc.usage, TextureUsage::DepthStencilAttachment)) {
 		auto subresources = ref.subresources;
 		subresources.layerCount = desc.depth;
 		attachment = image.create_view(

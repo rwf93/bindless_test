@@ -52,7 +52,7 @@ TextureRegistry TextureRegistry::create(gfx::Device &device) {
 			gfx::Texture2DDesc{
 				.width = 128,
 				.height = 128,
-				.format = VK_FORMAT_R8G8B8A8_UNORM,
+					.format = gfx::Format::R8G8B8A8Unorm,
 				.name = "missing",
 			},
 			[](int x, int y) {
@@ -68,7 +68,7 @@ TextureRegistry TextureRegistry::create(gfx::Device &device) {
 			gfx::Texture2DDesc{
 				.width = 1,
 				.height = 1,
-				.format = VK_FORMAT_R8G8B8A8_UNORM,
+					.format = gfx::Format::R8G8B8A8Unorm,
 				.name = "black",
 			},
 			[](int, int) { return 0xff000000u; }
@@ -80,7 +80,7 @@ TextureRegistry TextureRegistry::create(gfx::Device &device) {
 			gfx::Texture2DDesc{
 				.width = 1,
 				.height = 1,
-				.format = VK_FORMAT_R8G8B8A8_UNORM,
+					.format = gfx::Format::R8G8B8A8Unorm,
 				.name = "white",
 			},
 			[](int, int) { return 0xffffffffu; }

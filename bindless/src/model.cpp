@@ -200,7 +200,7 @@ void Model::draw_depth(
 
 	constants.object_handle = m.mesh_transforms.handle();
 	constants.material_handle = UINT32_MAX;
-	commands.bind_pipeline(pipeline.pipeline());
+	commands.set_pipeline(pipeline);
 
 	const uint32_t base = uint32_t(m.next_instance * m.draws.size());
 	m.next_instance++;
@@ -236,7 +236,7 @@ void Model::draw_local_shadow_views(
 	assert(m.next_instance < max_instances);
 	constants.object_handle = m.mesh_transforms.handle();
 	constants.material_handle = UINT32_MAX;
-	commands.bind_pipeline(pipeline.pipeline());
+	commands.set_pipeline(pipeline);
 
 	const uint32_t base = uint32_t(m.next_instance * m.draws.size());
 	m.next_instance++;

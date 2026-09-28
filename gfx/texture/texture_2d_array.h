@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "gfx/image.h"
+#include "gfx/types.h"
 
 namespace gfx {
 
@@ -16,8 +17,8 @@ struct Texture2DArrayDesc {
 	uint32_t width = 0;
 	uint32_t height = 0;
 	uint32_t layer_count = 0;
-	VkFormat format = VK_FORMAT_UNDEFINED;
-	VkImageUsageFlags usage = 0;
+	Format format = Format::Undefined;
+	TextureUsage usage = TextureUsage::None;
 	std::string name;
 };
 

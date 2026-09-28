@@ -137,7 +137,7 @@ int run() {
 			},
 			[&](gfx::CommandList &cmd) {
 				cmd.viewport(presentation.extent().width, presentation.extent().height);
-				cmd.bind_pipeline(pipeline.pipeline());
+				cmd.set_pipeline(pipeline);
 				cmd.draw(3);
 			}
 		).compile();

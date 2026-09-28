@@ -5,6 +5,7 @@
 
 #include "gfx/command_list.h"
 #include "gfx/device.h"
+#include "gfx/detail/types.h"
 #include "gfx/texture/texture_internal.h"
 
 namespace gfx {
@@ -20,7 +21,7 @@ TextureCube TextureCube::create(Device &device, const TextureCubeDesc &desc) {
 		throw std::invalid_argument("TextureCube::create: too many mip levels");
 
 	const VkImageUsageFlags complete_usage =
-		desc.usage |
+		detail::to_vk_image_usage(desc.usage) |
 		VK_IMAGE_USAGE_SAMPLED_BIT |
 		VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	auto image = texture_detail::create_image(
@@ -28,7 +29,7 @@ TextureCube TextureCube::create(Device &device, const TextureCubeDesc &desc) {
 		ImageDesc{
 			.image_type = VK_IMAGE_TYPE_2D,
 			.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
-			.format = desc.format,
+			.format = detail::to_vk_format(desc.format),
 			.extent = {desc.resolution, desc.resolution, 1},
 			.usage = complete_usage,
 			.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
@@ -54,7 +55,7 @@ TextureCube TextureCube::create(Device &device, const TextureCubeDesc &desc) {
 	});
 
 	ImageRef attachment;
-	if(desc.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) {
+	if(has_usage(desc.usage, TextureUsage::ColorAttachment)) {
 		auto subresources = sampled_view.subresources;
 		subresources.baseMipLevel = 0;
 		subresources.levelCount = 1;
@@ -67,7 +68,7 @@ TextureCube TextureCube::create(Device &device, const TextureCubeDesc &desc) {
 
 	std::vector<ImageRef> storage_views;
 	std::vector<uint32_t> storage_handles;
-	if(desc.usage & VK_IMAGE_USAGE_STORAGE_BIT) {
+	if(has_usage(desc.usage, TextureUsage::Storage)) {
 		storage_views.reserve(desc.mip_count);
 		storage_handles.reserve(desc.mip_count);
 		for(uint32_t mip = 0; mip < desc.mip_count; mip++) {

@@ -5,13 +5,14 @@
 #include <vector>
 
 #include "gfx/device.h"
+#include "gfx/detail/types.h"
 #include "gfx/texture/texture_internal.h"
 
 namespace gfx {
 namespace {
 
-size_t uploaded_texel_size(VkFormat format) {
-	switch(format) {
+size_t uploaded_texel_size(Format format) {
+	switch(detail::to_vk_format(format)) {
 	case VK_FORMAT_R8G8B8A8_UNORM:
 	case VK_FORMAT_R8G8B8A8_SRGB:
 		return 4;
@@ -59,10 +60,10 @@ Texture2D Texture2D::create(
 		ImageDesc{
 			.image_type = VK_IMAGE_TYPE_2D,
 			.view_type = VK_IMAGE_VIEW_TYPE_2D,
-			.format = desc.format,
+			.format = detail::to_vk_format(desc.format),
 			.extent = {desc.width, desc.height, 1},
 			.usage =
-				desc.usage |
+				detail::to_vk_image_usage(desc.usage) |
 				VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
 				VK_IMAGE_USAGE_TRANSFER_DST_BIT |
 				VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -74,7 +75,7 @@ Texture2D Texture2D::create(
 		device,
 		ref,
 		{desc.width, desc.height, 1},
-		desc.format,
+		detail::to_vk_format(desc.format),
 		data,
 		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
 	);
@@ -89,15 +90,17 @@ Texture2D Texture2D::create(
 }
 
 Texture2D Texture2D::create(Device &device, const Texture2DDesc &desc) {
-	const VkImageLayout initial_layout = texture_detail::initial_layout_for(desc.format);
+	const VkImageLayout initial_layout = texture_detail::initial_layout_for(
+		detail::to_vk_format(desc.format)
+	);
 	auto image = texture_detail::create_image(
 		device,
 		ImageDesc{
 			.image_type = VK_IMAGE_TYPE_2D,
 			.view_type = VK_IMAGE_VIEW_TYPE_2D,
-			.format = desc.format,
+			.format = detail::to_vk_format(desc.format),
 			.extent = {desc.width, desc.height, 1},
-			.usage = desc.usage | VK_IMAGE_USAGE_SAMPLED_BIT,
+			.usage = detail::to_vk_image_usage(desc.usage) | VK_IMAGE_USAGE_SAMPLED_BIT,
 		},
 		initial_layout
 	);

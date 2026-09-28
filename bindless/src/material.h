@@ -57,7 +57,7 @@ public:
 
 	void bind(gfx::CommandList &commands, PushConstants &push_constants) {
 		push_constants.material_handle = m.buffer.handle();
-		commands.bind_pipeline(m.pipeline->pipeline());
+		commands.set_pipeline(*m.pipeline);
 	}
 
 	// Bind this material's parameter block with a layout-compatible override
@@ -69,6 +69,6 @@ public:
 		gfx::Pipeline &pipeline
 	) {
 		push_constants.material_handle = m.buffer.handle();
-		commands.bind_pipeline(pipeline.pipeline());
+		commands.set_pipeline(pipeline);
 	}
 };

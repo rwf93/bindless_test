@@ -156,8 +156,8 @@ int run() {
 	auto missing = gfx::Texture2D::generate(device, gfx::Texture2DDesc{
 		.width = 128,
 		.height = 128,
-		.format = VK_FORMAT_R8G8B8A8_UNORM,
-		.usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+		.format = gfx::Format::R8G8B8A8Unorm,
+		.usage = gfx::TextureUsage::Sampled,
 	}, [](int x, int y) { return ((x / 16) + (y / 16)) % 2 == 0 ? 0x00ff0090u : 0x00000000u; });
 
 	auto framegraph = gfx::FrameGraph::create(device)
@@ -167,8 +167,12 @@ int run() {
 			},
 			[&](gfx::CommandList &cmd) {
 				cmd.viewport(presentation.extent().width, presentation.extent().height);
-				cmd.bind_pipeline(pipeline.pipeline());
-				cmd.push_handle(missing.handle());
+				cmd.set_pipeline(pipeline);
+				const struct { uint32_t handle; uint32_t offset; } handle = {
+					missing.handle(),
+					0,
+				};
+				cmd.set_root_data(&handle, sizeof(handle));
 				cmd.draw(3);
 			}
 		).compile();

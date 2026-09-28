@@ -38,30 +38,30 @@ LightProbe LightProbe::create(
 	textures.create<gfx::TextureCube>(gfx::TextureCubeDesc{
 		.resolution = resolution,
 		.mip_count = 1,
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		.format = gfx::Format::R16G16B16A16Float,
+		.usage = gfx::TextureUsage::ColorAttachment,
 		.name = capture_name,
 	});
 	textures.create<gfx::TextureCube>(gfx::TextureCubeDesc{
 		.resolution = resolution,
 		.mip_count = full_mip_count(resolution),
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_STORAGE_BIT,
+		.format = gfx::Format::R16G16B16A16Float,
+		.usage = gfx::TextureUsage::Storage,
 		.name = specular_name,
 	});
 	textures.create<gfx::TextureCube>(gfx::TextureCubeDesc{
 		.resolution = irradiance_resolution,
 		.mip_count = 1,
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_STORAGE_BIT,
+		.format = gfx::Format::R16G16B16A16Float,
+		.usage = gfx::TextureUsage::Storage,
 		.name = diffuse_name,
 	});
 	textures.create<gfx::Texture2DArray>(gfx::Texture2DArrayDesc{
 		.width = resolution,
 		.height = resolution,
 		.layer_count = LIGHT_PROBE_FACE_COUNT,
-		.format = VK_FORMAT_D32_SFLOAT,
-		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.format = gfx::Format::D32Float,
+		.usage = gfx::TextureUsage::DepthStencilAttachment,
 		.name = depth_name,
 	});
 	return LightProbe(M{
@@ -184,8 +184,8 @@ LightProbeSet LightProbeSet::create(
 	textures.create<gfx::Texture2D>(gfx::Texture2DDesc{
 		.width = brdf_resolution,
 		.height = brdf_resolution,
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_STORAGE_BIT,
+		.format = gfx::Format::R16G16B16A16Float,
+		.usage = gfx::TextureUsage::Storage,
 		.name = brdf_name,
 	});
 

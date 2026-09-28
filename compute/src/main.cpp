@@ -23,8 +23,8 @@ int run() {
 	auto image = gfx::Texture2D::create(device, gfx::Texture2DDesc{
 		.width = 128,
 		.height = 128,
-		.format = VK_FORMAT_R8G8B8A8_UNORM,
-		.usage = VK_IMAGE_USAGE_STORAGE_BIT,
+		.format = gfx::Format::R8G8B8A8Unorm,
+		.usage = gfx::TextureUsage::Storage,
 		.name = "compute_output",
 	});
 
@@ -62,12 +62,12 @@ int run() {
 	auto pipeline = gfx::Pipeline::create_compute(device, program);
 
 	device.submit_and_wait([&](gfx::CommandList &commands) {
-		commands.bind_pipeline(pipeline.pipeline());
+		commands.set_pipeline(pipeline);
 		const Bindings bindings = {
 			.buffer = {buffer.handle(), 0},
 			.image = {image.handle(), 0},
 		};
-		commands.push_constants(&bindings, sizeof(bindings));
+		commands.set_root_data(&bindings, sizeof(bindings));
 		commands.dispatch(128 / 8, 128 / 8);
 	});
 

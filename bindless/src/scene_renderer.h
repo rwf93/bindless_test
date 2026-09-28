@@ -30,6 +30,7 @@ private:
 	struct M {
 		std::vector<Instance> instances;
 		std::vector<Model *> models;
+		Material *skybox;
 	} m;
 
 	explicit SceneRenderer(M m) : m(std::move(m)) {}
@@ -56,27 +57,42 @@ public:
 		InstanceOptions options = {}
 	) &&;
 
+
+	SceneRenderer &set_skybox(Material &skybox) &;
+	SceneRenderer &&set_skybox(Material &skybox) &&;
+
 	void draw_opaque(gfx::CommandList &commands, PushConstants &constants);
+
 	void draw_cascaded_shadows(
 		gfx::CommandList &commands,
 		PushConstants &constants,
 		gfx::Pipeline &pipeline
 	);
+
 	void draw_local_shadows(
 		gfx::CommandList &commands,
 		PushConstants &constants,
 		gfx::Pipeline &pipeline,
 		std::span<const LocalShadowView> views
 	);
+
 	void draw_depth_prepass(
 		gfx::CommandList &commands,
 		PushConstants &constants,
 		gfx::Pipeline &one_sided_pipeline,
 		gfx::Pipeline &two_sided_pipeline
 	);
+
 	void draw_probe(
 		gfx::CommandList &commands,
 		PushConstants &constants,
 		gfx::Pipeline &pipeline
+	);
+
+	void draw_skybox(
+		gfx::CommandList &commands,
+		PushConstants &constants,
+		gfx::Pipeline *pipeline = nullptr,
+		uint32_t instance_count = 0
 	);
 };

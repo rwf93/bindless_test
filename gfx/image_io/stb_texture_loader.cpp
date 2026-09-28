@@ -62,7 +62,7 @@ Texture2D STBTextureLoader::load(
 			Texture2DDesc{
 				.width = uint32_t(width),
 				.height = uint32_t(height),
-				.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+				.format = Format::R16G16B16A16Float,
 				.name = path.filename().string(),
 			},
 			std::as_bytes(std::span(half_pixels))
@@ -88,9 +88,9 @@ Texture2D STBTextureLoader::load(
 		);
 	}
 
-	const VkFormat format = color_space == TextureColorSpace::SRGB
-		? VK_FORMAT_R8G8B8A8_SRGB
-		: VK_FORMAT_R8G8B8A8_UNORM;
+	const Format format = color_space == TextureColorSpace::SRGB
+		? Format::R8G8B8A8Srgb
+		: Format::R8G8B8A8Unorm;
 	const auto data = std::span(
 		reinterpret_cast<const std::byte *>(pixels.get()),
 		size_t(width) * height * 4

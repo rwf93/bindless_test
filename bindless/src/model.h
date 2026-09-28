@@ -53,7 +53,7 @@ private:
 		) {
 			push_constants.vbo_handle = m.vbo.handle();
 			push_constants.ibo_handle = m.ibo.handle();
-			commands.push_constants(&push_constants, sizeof(PushConstants));
+			commands.set_root_data(&push_constants, sizeof(PushConstants));
 			commands.draw(m.ibo.count(), instance_count, 0, first_instance);
 		}
 	};

@@ -1,5 +1,3 @@
 pipeline = "skybox"
-albedo_handle = "@black"
-hdri_enabled = 0
 hdri_intensity = 1.0
 hdri_rotation_degrees = 0.0

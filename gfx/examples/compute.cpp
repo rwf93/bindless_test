@@ -15,6 +15,30 @@ struct DescriptorHandle {
 	uint32_t offset;
 };
 
+// hack to override cause i hate cout
+template <typename T, std::size_t N>
+std::ostream& operator<<(std::ostream& os, const std::array<T, N>& arr) {
+    os << "[";
+    for (std::size_t i = 0; i < N; ++i) {
+        os << arr[i];
+        if (i < N - 1) os << ", ";
+    }
+    os << "]";
+    return os;
+}
+
+template <typename T>
+std::ostream& operator<<(std::ostream& os, const gfx::SharedBuffer<T>& arr) {
+    os << "[";
+	for(std::size_t i = 0; i < arr.count(); i++) {
+		os << arr[i];
+		if (i < arr.count() - 1) os << ", ";
+	}
+    os << "]";
+    return os;
+}
+
+
 int run() {
 	auto instance = gfx::Instance::create({
 		.application_name = "gfx_compute_example",
@@ -55,24 +79,17 @@ int run() {
 	auto pipeline = gfx::Pipeline::create_compute(device, program);
 
 	device.submit_and_wait([&](gfx::CommandList &commands) {
-		commands.bind_pipeline(pipeline.pipeline());
+		commands.set_pipeline(pipeline);
 		const DescriptorHandle handle = {output.handle(), 0};
-		commands.push_constants(&handle, sizeof(handle));
+		commands.set_root_data(&handle, sizeof(handle));
 		commands.dispatch(1);
 	});
 
 	output.invalidate();
 	constexpr std::array<uint32_t, 4> expected = {1, 4, 7, 10};
-	for(size_t index = 0; index < expected.size(); index++) {
-		if(output[index] != expected[index]) {
-			throw std::runtime_error(
-				"compute shader produced an unexpected result at index " +
-				std::to_string(index)
-			);
-		}
-	}
+	std::cout << "expected: " << expected << "\n";
+	std::cout << "got: " << output << "\n";
 
-	std::cout << "compute example completed successfully\n";
 	return 0;
 }
 

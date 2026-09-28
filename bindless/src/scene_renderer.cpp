@@ -34,6 +34,20 @@ SceneRenderer &&SceneRenderer::add(
 	return std::move(*this);
 }
 
+SceneRenderer &SceneRenderer::set_skybox(
+	Material &skybox
+) & {
+	m.skybox = &skybox;
+	return *this;
+}
+
+SceneRenderer &&SceneRenderer::set_skybox(
+	Material &skybox
+) && {
+	m.skybox = &skybox;
+	return std::move(*this);
+}
+
 void SceneRenderer::reset_models() {
 	for(Model *model : m.models)
 		model->reset();
@@ -136,4 +150,19 @@ void SceneRenderer::draw_probe(
 			);
 		}
 	}
+}
+
+void SceneRenderer::draw_skybox(
+	gfx::CommandList &commands,
+	PushConstants &constants,
+	gfx::Pipeline *pipeline,
+	uint32_t instance_count
+) {
+	if (pipeline)
+		m.skybox->bind(commands, constants, *pipeline);
+	else
+		m.skybox->bind(commands, constants);
+
+	commands.set_root_data(&constants, sizeof(PushConstants));
+	commands.draw(3, instance_count);
 }

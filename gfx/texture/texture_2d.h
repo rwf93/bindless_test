@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "gfx/image.h"
+#include "gfx/types.h"
 
 namespace gfx {
 
@@ -17,8 +18,8 @@ class Device;
 struct Texture2DDesc {
 	uint32_t width = 0;
 	uint32_t height = 0;
-	VkFormat format = VK_FORMAT_UNDEFINED;
-	VkImageUsageFlags usage = 0;
+	Format format = Format::Undefined;
+	TextureUsage usage = TextureUsage::None;
 	std::string name;
 };
 

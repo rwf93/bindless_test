@@ -1,9 +1,9 @@
 struct Material {
     Texture2D.Handle albedo_handle;
-    float hdri_enabled;
     float hdri_intensity;
     float hdri_rotation_degrees;
-    float hdri_padding;
+    float hdri_padding0;
+    float hdri_padding1;
 };
 
 float3 sky_hash33(float3 p) {
@@ -67,8 +67,7 @@ float2 direction_to_equirectangular_uv(
 }
 
 float3 sample_sky(Material material, float3 direction) {
-    if(material.hdri_enabled >= 0.5 &&
-        descriptor_handle_is_valid(material.albedo_handle))
+    if(descriptor_handle_is_valid(material.albedo_handle))
     {
         float2 uv = direction_to_equirectangular_uv(
             direction,
