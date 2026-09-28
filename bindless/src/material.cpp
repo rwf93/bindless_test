@@ -2,17 +2,18 @@
 
 #include <algorithm>
 #include <cstring>
+#include <span>
 #include <stdexcept>
 #include <vector>
 
 #include <spdlog/spdlog.h>
 
 Material Material::create_impl(
-	Pipeline &pipeline,
+	gfx::Pipeline &pipeline,
+	const MaterialLayout &layout,
 	const MaterialParam *params,
 	size_t count
 ) {
-	const auto &layout = pipeline.material_layout();
 	if(!layout.valid())
 		throw std::runtime_error("Material::create: pipeline has no Material layout");
 
@@ -56,6 +57,9 @@ Material Material::create_impl(
 
 	return Material(M{
 		.pipeline = &pipeline,
-		.buffer = GPUBuffer<uint8_t>::create(slot.data(), slot.size()),
+		.buffer = gfx::Buffer<uint8_t>::create(
+			pipeline.device(),
+			std::span<const uint8_t>(slot)
+		),
 	});
 }

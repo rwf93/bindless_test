@@ -24,7 +24,6 @@ add_requires("fmt 11.0.1", {
 
 add_requires("tomlcpp")
 
-
 add_requires("libsdl3", {
 	configs = {
 		shared = true
@@ -179,4 +178,4 @@ rule("defaults_rule")
 		end
 	end)
 
-includes("bindless", "material-generator")
+includes("gfx", "compute", "bindless", "material-generator")

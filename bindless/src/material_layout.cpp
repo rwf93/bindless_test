@@ -1,12 +1,14 @@
-#include "shader.h"
+#include "material_layout.h"
 
 #include <cstring>
 #include <utility>
 
 #include <spdlog/spdlog.h>
 
+#include "gfx/slang/shader.h"
+
 MaterialLayout MaterialLayout::reflect(
-	SlangProgram &program,
+	gfx::SlangProgram &program,
 	const char *struct_name
 ) {
 	MaterialLayout layout;

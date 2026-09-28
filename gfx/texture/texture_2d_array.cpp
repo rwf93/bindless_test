@@ -1,0 +1,42 @@
+#include "gfx/texture/texture_2d_array.h"
+
+#include "gfx/device.h"
+#include "gfx/texture/texture_internal.h"
+
+namespace gfx {
+
+Texture2DArray Texture2DArray::create(
+	Device &device,
+	const Texture2DArrayDesc &desc
+) {
+	if(desc.layer_count == 0) {
+		throw std::invalid_argument(
+			"Texture2DArray::create: layer_count must be greater than zero"
+		);
+	}
+
+	const VkImageLayout initial_layout = texture_detail::initial_layout_for(desc.format);
+	auto image = texture_detail::create_image(
+		device,
+		ImageDesc{
+			.image_type = VK_IMAGE_TYPE_2D,
+			.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+			.format = desc.format,
+			.extent = {desc.width, desc.height, 1},
+			.usage = desc.usage | VK_IMAGE_USAGE_SAMPLED_BIT,
+			.layer_count = desc.layer_count,
+		},
+		initial_layout
+	);
+	const ImageRef ref = image.ref();
+
+	texture_detail::set_image_debug_names(device, ref, desc.name);
+	return Texture2DArray(M{
+		.image = std::move(image),
+		.initial_layout = initial_layout,
+		.handle = device.register_image(ref),
+		.name = desc.name,
+	});
+}
+
+} // namespace gfx

@@ -12,104 +12,73 @@
 #include <unordered_map>
 #include <utility>
 
-#include "texture_2d.h"
-#include "texture_2d_array.h"
-#include "texture_3d.h"
-#include "texture_cube.h"
+#include "gfx/image_io/stb_texture_loader.h"
+#include "gfx/texture/texture.h"
 
+namespace texture_registry_detail {
 template<typename>
-inline constexpr bool unsupported_texture_registry_type = false;
+inline constexpr bool unsupported_type = false;
 
 template<typename Texture>
-inline constexpr bool supported_texture_registry_type =
-	std::is_same_v<Texture, Texture2D> ||
-	std::is_same_v<Texture, Texture2DArray> ||
-	std::is_same_v<Texture, Texture3D> ||
-	std::is_same_v<Texture, TextureCube>;
+inline constexpr bool supported_type =
+	std::is_same_v<Texture, gfx::Texture2D> ||
+	std::is_same_v<Texture, gfx::Texture2DArray> ||
+	std::is_same_v<Texture, gfx::Texture3D> ||
+	std::is_same_v<Texture, gfx::TextureCube>;
+}
 
 class TextureRegistry {
 	struct M {
-		std::unordered_map<std::string, Texture2D> cached_2d;
-		std::unordered_map<std::string, Texture2D> named_2d;
-		std::unordered_map<std::string, Texture2DArray> named_2d_arrays;
-		std::unordered_map<std::string, Texture3D> named_3d;
-		std::unordered_map<std::string, TextureCube> named_cubes;
+		gfx::Device *device = nullptr;
+		std::unordered_map<std::string, gfx::Texture2D> cached_2d;
+		std::unordered_map<std::string, gfx::Texture2D> named_2d;
+		std::unordered_map<std::string, gfx::Texture2DArray> named_2d_arrays;
+		std::unordered_map<std::string, gfx::Texture3D> named_3d;
+		std::unordered_map<std::string, gfx::TextureCube> named_cubes;
 	} m;
 
 	explicit TextureRegistry(M m) : m(std::move(m)) {}
 
-	Texture2D &create_impl(
-		std::type_identity<Texture2D>,
-		uint32_t width,
-		uint32_t height,
-		VkFormat format,
-		std::function<uint32_t(int x, int y)> function,
-		const std::string &name
+	gfx::Texture2D &create_impl(
+		std::type_identity<gfx::Texture2D>,
+		const gfx::Texture2DDesc &desc,
+		std::function<uint32_t(int x, int y)> function
 	);
-	Texture2D &create_impl(
-		std::type_identity<Texture2D>,
-		uint32_t width,
-		uint32_t height,
-		VkFormat format,
-		std::span<const std::byte> data,
-		const std::string &name
+	gfx::Texture2D &create_impl(
+		std::type_identity<gfx::Texture2D>,
+		const gfx::Texture2DDesc &desc,
+		std::span<const std::byte> data
 	);
-	Texture2D &create_impl(
-		std::type_identity<Texture2D>,
-		uint32_t width,
-		uint32_t height,
-		VkFormat format,
-		VkImageUsageFlags usage,
-		const std::string &name
+	gfx::Texture2D &create_impl(
+		std::type_identity<gfx::Texture2D>,
+		const gfx::Texture2DDesc &desc
 	);
-	Texture2DArray &create_impl(
-		std::type_identity<Texture2DArray>,
-		uint32_t width,
-		uint32_t height,
-		uint32_t layer_count,
-		VkFormat format,
-		VkImageUsageFlags usage,
-		const std::string &name
+	gfx::Texture2DArray &create_impl(
+		std::type_identity<gfx::Texture2DArray>,
+		const gfx::Texture2DArrayDesc &desc
 	);
-	Texture3D &create_impl(
-		std::type_identity<Texture3D>,
-		uint32_t width,
-		uint32_t height,
-		uint32_t depth,
-		VkFormat format,
-		std::function<uint32_t(int x, int y, int z)> function,
-		const std::string &name
+	gfx::Texture3D &create_impl(
+		std::type_identity<gfx::Texture3D>,
+		const gfx::Texture3DDesc &desc,
+		std::function<uint32_t(int x, int y, int z)> function
 	);
-	Texture3D &create_impl(
-		std::type_identity<Texture3D>,
-		uint32_t width,
-		uint32_t height,
-		uint32_t depth,
-		VkFormat format,
-		std::span<const std::byte> data,
-		const std::string &name
+	gfx::Texture3D &create_impl(
+		std::type_identity<gfx::Texture3D>,
+		const gfx::Texture3DDesc &desc,
+		std::span<const std::byte> data
 	);
-	Texture3D &create_impl(
-		std::type_identity<Texture3D>,
-		uint32_t width,
-		uint32_t height,
-		uint32_t depth,
-		VkFormat format,
-		VkImageUsageFlags usage,
-		const std::string &name
+	gfx::Texture3D &create_impl(
+		std::type_identity<gfx::Texture3D>,
+		const gfx::Texture3DDesc &desc
 	);
-	TextureCube &create_impl(
-		std::type_identity<TextureCube>,
-		uint32_t resolution,
-		uint32_t mip_count,
-		VkFormat format,
-		VkImageUsageFlags usage,
-		const std::string &name
+	gfx::TextureCube &create_impl(
+		std::type_identity<gfx::TextureCube>,
+		const gfx::TextureCubeDesc &desc
 	);
 
-	Texture2D &load_2d(
+	gfx::Texture2D &load_2d(
 		const std::filesystem::path &path,
-		TextureColorSpace color_space
+		gfx::TextureColorSpace color_space
 	);
 
 public:
@@ -120,18 +89,19 @@ public:
 
 	// Creates a registry with the always-available missing, black, and white
 	// textures already registered.
-	static TextureRegistry create();
+	static TextureRegistry create(gfx::Device &device);
+	gfx::Device &device() const { return *m.device; }
 
 	template<typename Texture, typename... Args>
 	Texture &create(Args &&...args) {
-		if constexpr(supported_texture_registry_type<Texture>) {
+		if constexpr(texture_registry_detail::supported_type<Texture>) {
 			return create_impl(
 				std::type_identity<Texture>{},
 				std::forward<Args>(args)...
 			);
 		} else {
 			static_assert(
-				unsupported_texture_registry_type<Texture>,
+				texture_registry_detail::unsupported_type<Texture>,
 				"TextureRegistry does not support this texture type"
 			);
 		}
@@ -140,13 +110,13 @@ public:
 	template<typename Texture>
 	Texture &load(
 		const std::filesystem::path &path,
-		TextureColorSpace color_space
+		gfx::TextureColorSpace color_space
 	) {
-		if constexpr(std::is_same_v<Texture, Texture2D>) {
+		if constexpr(std::is_same_v<Texture, gfx::Texture2D>) {
 			return load_2d(path, color_space);
 		} else {
 			static_assert(
-				unsupported_texture_registry_type<Texture>,
+				texture_registry_detail::unsupported_type<Texture>,
 				"TextureRegistry can only load Texture2D files"
 			);
 		}
@@ -155,21 +125,21 @@ public:
 	template<typename Texture>
 	Texture *find_named(std::string_view name) {
 		const std::string key(name);
-		if constexpr(std::is_same_v<Texture, Texture2D>) {
+		if constexpr(std::is_same_v<Texture, gfx::Texture2D>) {
 			auto found = m.named_2d.find(key);
 			return found == m.named_2d.end() ? nullptr : &found->second;
-		} else if constexpr(std::is_same_v<Texture, Texture2DArray>) {
+		} else if constexpr(std::is_same_v<Texture, gfx::Texture2DArray>) {
 			auto found = m.named_2d_arrays.find(key);
 			return found == m.named_2d_arrays.end() ? nullptr : &found->second;
-		} else if constexpr(std::is_same_v<Texture, Texture3D>) {
+		} else if constexpr(std::is_same_v<Texture, gfx::Texture3D>) {
 			auto found = m.named_3d.find(key);
 			return found == m.named_3d.end() ? nullptr : &found->second;
-		} else if constexpr(std::is_same_v<Texture, TextureCube>) {
+		} else if constexpr(std::is_same_v<Texture, gfx::TextureCube>) {
 			auto found = m.named_cubes.find(key);
 			return found == m.named_cubes.end() ? nullptr : &found->second;
 		} else {
 			static_assert(
-				unsupported_texture_registry_type<Texture>,
+				texture_registry_detail::unsupported_type<Texture>,
 				"TextureRegistry does not support this texture type"
 			);
 		}

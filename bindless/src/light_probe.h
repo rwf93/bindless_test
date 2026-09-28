@@ -10,13 +10,15 @@
 
 #include <glm/glm.hpp>
 
-#include "gpu_buffer.h"
+#include "gfx/buffer.h"
 #include "shader_types.h"
 
+class TextureRegistry;
+namespace gfx {
 class Texture2D;
 class Texture2DArray;
 class TextureCube;
-class TextureRegistry;
+}
 
 inline constexpr uint32_t LIGHT_PROBE_DEFAULT_RESOLUTION = 128;
 inline constexpr uint32_t LIGHT_PROBE_DEFAULT_IRRADIANCE_RESOLUTION = 16;
@@ -28,7 +30,7 @@ inline constexpr uint32_t LIGHT_PROBE_DEFAULT_BRDF_RESOLUTION = 256;
 class LightProbe {
 	struct M {
 		TextureRegistry *textures = nullptr;
-		MultiBuffer<LightProbeData> data;
+		gfx::MultiBuffer<LightProbeData> data;
 		glm::vec3 position = glm::vec3(0.0f);
 		glm::vec3 box_min = glm::vec3(-50.0f);
 		glm::vec3 box_max = glm::vec3(50.0f);
@@ -64,14 +66,14 @@ public:
 
 	void prepare();
 
-	TextureCube &capture();
-	const TextureCube &capture() const;
-	TextureCube &specular();
-	const TextureCube &specular() const;
-	TextureCube &diffuse();
-	const TextureCube &diffuse() const;
-	Texture2DArray &depth();
-	const Texture2DArray &depth() const;
+	gfx::TextureCube &capture();
+	const gfx::TextureCube &capture() const;
+	gfx::TextureCube &specular();
+	const gfx::TextureCube &specular() const;
+	gfx::TextureCube &diffuse();
+	const gfx::TextureCube &diffuse() const;
+	gfx::Texture2DArray &depth();
+	const gfx::Texture2DArray &depth() const;
 
 	uint32_t handle() const { return m.data.handle(); }
 	VkBuffer buffer() const { return m.data.buffer(); }
@@ -106,7 +108,7 @@ public:
 class LightProbeSet {
 	struct M {
 		TextureRegistry *textures = nullptr;
-		MultiBuffer<ReflectionProbeData> data;
+		gfx::MultiBuffer<ReflectionProbeData> data;
 		std::vector<LightProbe> probes;
 		size_t capacity = 0;
 		size_t capture_cursor = 0;
@@ -144,8 +146,8 @@ public:
 	void invalidate_brdf_lut() { m.brdf_dirty = true; }
 	void finish_brdf_lut() { m.brdf_dirty = false; }
 
-	Texture2D &brdf_lut();
-	const Texture2D &brdf_lut() const;
+	gfx::Texture2D &brdf_lut();
+	const gfx::Texture2D &brdf_lut() const;
 	std::span<LightProbe> probes() { return m.probes; }
 	std::span<const LightProbe> probes() const { return m.probes; }
 	LightProbe &operator[](size_t index) { return m.probes.at(index); }

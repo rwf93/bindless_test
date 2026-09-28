@@ -40,47 +40,47 @@ void SceneRenderer::reset_models() {
 }
 
 void SceneRenderer::draw_opaque(
-	FrameGraph::PassContext &ctx,
+	gfx::CommandList &commands,
 	PushConstants &constants
 ) {
 	reset_models();
 	for(const Instance &instance : m.instances) {
 		if(instance.options.material_override) {
 			instance.model->draw(
-				ctx,
+				commands,
 				constants,
 				*instance.options.material_override,
 				instance.transform
 			);
 		} else {
-			instance.model->draw(ctx, constants, instance.transform);
+			instance.model->draw(commands, constants, instance.transform);
 		}
 	}
 }
 
 void SceneRenderer::draw_cascaded_shadows(
-	FrameGraph::PassContext &ctx,
+	gfx::CommandList &commands,
 	PushConstants &constants,
-	Pipeline &pipeline
+	gfx::Pipeline &pipeline
 ) {
 	reset_models();
 	for(const Instance &instance : m.instances) {
 		if(instance.options.casts_shadow)
-			instance.model->draw_shadow(ctx, constants, pipeline, instance.transform);
+			instance.model->draw_shadow(commands, constants, pipeline, instance.transform);
 	}
 }
 
 void SceneRenderer::draw_local_shadows(
-	FrameGraph::PassContext &ctx,
+	gfx::CommandList &commands,
 	PushConstants &constants,
-	Pipeline &pipeline,
+	gfx::Pipeline &pipeline,
 	std::span<const LocalShadowView> views
 ) {
 	reset_models();
 	for(const Instance &instance : m.instances) {
 		if(instance.options.casts_shadow) {
 			instance.model->draw_local_shadows(
-				ctx,
+				commands,
 				constants,
 				pipeline,
 				views,
@@ -91,18 +91,18 @@ void SceneRenderer::draw_local_shadows(
 }
 
 void SceneRenderer::draw_depth_prepass(
-	FrameGraph::PassContext &ctx,
+	gfx::CommandList &commands,
 	PushConstants &constants,
-	Pipeline &one_sided_pipeline,
-	Pipeline &two_sided_pipeline
+	gfx::Pipeline &one_sided_pipeline,
+	gfx::Pipeline &two_sided_pipeline
 ) {
 	reset_models();
 	for(const Instance &instance : m.instances) {
-		Pipeline &pipeline = instance.options.two_sided
+		gfx::Pipeline &pipeline = instance.options.two_sided
 			? two_sided_pipeline
 			: one_sided_pipeline;
 		instance.model->draw_depth_prepass(
-			ctx,
+			commands,
 			constants,
 			pipeline,
 			instance.transform
@@ -111,9 +111,9 @@ void SceneRenderer::draw_depth_prepass(
 }
 
 void SceneRenderer::draw_probe(
-	FrameGraph::PassContext &ctx,
+	gfx::CommandList &commands,
 	PushConstants &constants,
-	Pipeline &pipeline
+	gfx::Pipeline &pipeline
 ) {
 	reset_models();
 	for(const Instance &instance : m.instances) {
@@ -121,7 +121,7 @@ void SceneRenderer::draw_probe(
 			continue;
 		if(instance.options.material_override) {
 			instance.model->draw_probe(
-				ctx,
+				commands,
 				constants,
 				pipeline,
 				*instance.options.material_override,
@@ -129,7 +129,7 @@ void SceneRenderer::draw_probe(
 			);
 		} else {
 			instance.model->draw_probe(
-				ctx,
+				commands,
 				constants,
 				pipeline,
 				instance.transform

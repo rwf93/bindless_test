@@ -8,16 +8,16 @@
 #include <spdlog/spdlog.h>
 #include <tomlcpp.hpp>
 
-#include "create_utils.h"
+#include "gfx/create_utils.h"
 #include "pipeline_registry.h"
 #include "texture_registry.h"
 #include "vfs.h"
 
 namespace {
 
-TextureColorSpace parse_texture_color_space(const std::string &name) {
-	if(name == "linear") return TextureColorSpace::Linear;
-	if(name == "srgb") return TextureColorSpace::SRGB;
+gfx::TextureColorSpace parse_texture_color_space(const std::string &name) {
+	if(name == "linear") return gfx::TextureColorSpace::Linear;
+	if(name == "srgb") return gfx::TextureColorSpace::SRGB;
 	throw std::runtime_error(
 		"invalid texture color_space '" + name +
 		"'; expected 'linear' or 'srgb'"
@@ -41,6 +41,10 @@ MaterialRegistry MaterialRegistry::create(
 		.textures = &textures,
 		.materials = {},
 	});
+}
+
+gfx::Device &MaterialRegistry::device() const {
+	return m.pipelines->device();
 }
 
 std::filesystem::path MaterialRegistry::resolve(
@@ -67,8 +71,10 @@ Material MaterialRegistry::create_from_toml(
 	if(!has_pipeline || pipeline_name.empty())
 		throw std::runtime_error("material has no pipeline: " + resolved.string());
 
-	Pipeline *pipeline = m.pipelines->find(pipeline_name);
-	if(!pipeline) {
+	gfx::Pipeline *pipeline = m.pipelines->find(pipeline_name);
+	const MaterialLayout *layout =
+		m.pipelines->find_material_layout(pipeline_name);
+	if(!pipeline || !layout) {
 		throw std::runtime_error(
 			"pipeline '" + pipeline_name + "' not found for material '" +
 			resolved.string() + "'"
@@ -91,13 +97,13 @@ Material MaterialRegistry::create_from_toml(
 				);
 			}
 
-			const TextureColorSpace color_space =
+			const gfx::TextureColorSpace color_space =
 				parse_texture_color_space(color_space_name);
 			std::filesystem::path texture_path = m.vfs->resolve(texture_reference);
 			if(!std::filesystem::exists(texture_path))
 				texture_path = directory / texture_reference;
 
-			Texture2D &loaded = m.textures->load<Texture2D>(
+			gfx::Texture2D &loaded = m.textures->load<gfx::Texture2D>(
 				texture_path,
 				color_space
 			);
@@ -123,7 +129,8 @@ Material MaterialRegistry::create_from_toml(
 			}
 
 			const std::string texture_name = string_value.substr(1);
-			Texture2D *texture = m.textures->find_named<Texture2D>(texture_name);
+			gfx::Texture2D *texture =
+				m.textures->find_named<gfx::Texture2D>(texture_name);
 			if(!texture) {
 				throw std::runtime_error(
 					"named Texture2D '@" + texture_name + "' not found for '" +
@@ -198,7 +205,7 @@ Material MaterialRegistry::create_from_toml(
 		resolved.string(),
 		pipeline_name
 	);
-	return Material::create(*pipeline, parameters);
+	return Material::create(*pipeline, *layout, parameters);
 }
 
 Material &MaterialRegistry::load(const std::filesystem::path &path) {
@@ -213,7 +220,7 @@ Material &MaterialRegistry::load(const std::filesystem::path &path) {
 }
 
 void MaterialRegistry::reload_all() {
-	device().deviceWaitIdle();
+	m.pipelines->device().wait_idle();
 	for(auto &[path, material] : m.materials) {
 		try {
 			material = create_from_toml(path);

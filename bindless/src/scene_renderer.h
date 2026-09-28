@@ -56,27 +56,27 @@ public:
 		InstanceOptions options = {}
 	) &&;
 
-	void draw_opaque(FrameGraph::PassContext &ctx, PushConstants &constants);
+	void draw_opaque(gfx::CommandList &commands, PushConstants &constants);
 	void draw_cascaded_shadows(
-		FrameGraph::PassContext &ctx,
+		gfx::CommandList &commands,
 		PushConstants &constants,
-		Pipeline &pipeline
+		gfx::Pipeline &pipeline
 	);
 	void draw_local_shadows(
-		FrameGraph::PassContext &ctx,
+		gfx::CommandList &commands,
 		PushConstants &constants,
-		Pipeline &pipeline,
+		gfx::Pipeline &pipeline,
 		std::span<const LocalShadowView> views
 	);
 	void draw_depth_prepass(
-		FrameGraph::PassContext &ctx,
+		gfx::CommandList &commands,
 		PushConstants &constants,
-		Pipeline &one_sided_pipeline,
-		Pipeline &two_sided_pipeline
+		gfx::Pipeline &one_sided_pipeline,
+		gfx::Pipeline &two_sided_pipeline
 	);
 	void draw_probe(
-		FrameGraph::PassContext &ctx,
+		gfx::CommandList &commands,
 		PushConstants &constants,
-		Pipeline &pipeline
+		gfx::Pipeline &pipeline
 	);
 };

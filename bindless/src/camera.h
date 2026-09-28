@@ -27,7 +27,7 @@ public:
 	void process_event(SDL_Event *event, SDL_Window *window);
 	void update();
 
-	glm::vec3 get_position() { return m.position; }
+	const glm::vec3 &position() const { return m.position; }
 	glm::mat4 get_view_matrix();
 	glm::mat4 get_rotation_matrix();
 };

@@ -10,15 +10,20 @@
 #include <spdlog/spdlog.h>
 #include <tomlcpp.hpp>
 
-#include "create_utils.h"
+#include "gfx/create_utils.h"
 #include "vfs.h"
-#include "vkcontext.h"
 
 namespace {
 
-VkFormat parse_format(const std::string &name) {
-	if(name == "SWAPCHAIN")
-		return vkctx.swapchain.image_format;
+VkFormat parse_format(const std::string &name, VkFormat swapchain_format) {
+	if(name == "SWAPCHAIN") {
+		if(swapchain_format == VK_FORMAT_UNDEFINED) {
+			throw std::runtime_error(
+				"pipeline requests SWAPCHAIN format without a presentation format"
+			);
+		}
+		return swapchain_format;
+	}
 
 	static const std::unordered_map<std::string, VkFormat> formats = {
 		{"R8G8B8A8_UNORM", VK_FORMAT_R8G8B8A8_UNORM},
@@ -68,9 +73,11 @@ VkCompareOp parse_depth_compare(const std::string &name) {
 } // namespace
 
 void PipelineRegistry::load_pipeline(
+	gfx::Device &device,
+	VkFormat swapchain_format,
 	VFS &vfs,
 	const std::filesystem::path &path,
-	std::map<std::string, Pipeline> &pipelines
+	PipelineMap &pipelines
 ) {
 	auto result = toml::parseFile(path.string());
 	if(!result.table)
@@ -91,11 +98,14 @@ void PipelineRegistry::load_pipeline(
 		const bool inserted = pipelines.try_emplace(
 			name,
 			with_result_of([&] {
-				auto program = SlangProgram::create(
+				auto program = gfx::SlangProgram::create(
 					name.c_str(),
 					vfs.resolve(shader_path).string()
 				);
-				return Pipeline::create_compute(program);
+				return PipelineRecord{
+					.pipeline = gfx::Pipeline::create_compute(device, program),
+					.material_layout = MaterialLayout::reflect(program),
+				};
 			})
 		).second;
 		if(!inserted)
@@ -111,13 +121,13 @@ void PipelineRegistry::load_pipeline(
 		if(auto strings = array->getStringVector()) {
 			attachments.reserve(strings->size());
 			for(const auto &format : *strings)
-				attachments.push_back(parse_format(format));
+				attachments.push_back(parse_format(format, swapchain_format));
 		}
 	}
 
 	VkFormat depth_format = VK_FORMAT_UNDEFINED;
 	if(auto [has_depth, depth] = root.getString("depth"); has_depth)
-		depth_format = parse_format(depth);
+		depth_format = parse_format(depth, swapchain_format);
 
 	VkCullModeFlagBits cull = VK_CULL_MODE_NONE;
 	if(auto [has_cull, value] = root.getString("cull"); has_cull)
@@ -137,19 +147,25 @@ void PipelineRegistry::load_pipeline(
 	const bool inserted = pipelines.try_emplace(
 		name,
 		with_result_of([&] {
-			auto program = SlangProgram::create(
+			auto program = gfx::SlangProgram::create(
 				name.c_str(),
 				vfs.resolve(shader_path).string()
 			);
-			return Pipeline::create(
-				program,
-				attachments,
-				depth_format,
-				cull,
-				depth_test,
-				depth_write,
-				depth_compare
-			);
+			return PipelineRecord{
+				.pipeline = gfx::Pipeline::create_graphics(
+					device,
+					program,
+					gfx::GraphicsPipelineDesc{
+						.color_attachments = attachments,
+						.depth_format = depth_format,
+						.cull_mode = cull,
+						.depth_test = depth_test,
+						.depth_write = depth_write,
+						.depth_compare = depth_compare,
+					}
+				),
+				.material_layout = MaterialLayout::reflect(program),
+			};
 		})
 	).second;
 	if(!inserted)
@@ -157,8 +173,12 @@ void PipelineRegistry::load_pipeline(
 	spdlog::info("PipelineRegistry: loaded '{}' from '{}'", name, path.string());
 }
 
-std::map<std::string, Pipeline> PipelineRegistry::load_all(VFS &vfs) {
-	std::map<std::string, Pipeline> pipelines;
+PipelineRegistry::PipelineMap PipelineRegistry::load_all(
+	gfx::Device &device,
+	VkFormat swapchain_format,
+	VFS &vfs
+) {
+	PipelineMap pipelines;
 	auto directory = vfs.resolve("pipelines");
 	if(!std::filesystem::exists(directory))
 		throw std::runtime_error("pipeline directory not found: " + directory.string());
@@ -172,7 +192,7 @@ std::map<std::string, Pipeline> PipelineRegistry::load_all(VFS &vfs) {
 
 	for(const auto &path : files) {
 		try {
-			load_pipeline(vfs, path, pipelines);
+			load_pipeline(device, swapchain_format, vfs, path, pipelines);
 		} catch(const std::exception &error) {
 			spdlog::error("PipelineRegistry: {}", error.what());
 		}
@@ -187,27 +207,40 @@ std::map<std::string, Pipeline> PipelineRegistry::load_all(VFS &vfs) {
 	return pipelines;
 }
 
-PipelineRegistry PipelineRegistry::create(VFS &vfs) {
+PipelineRegistry PipelineRegistry::create(
+	gfx::Device &device,
+	VFS &vfs,
+	VkFormat swapchain_format
+) {
 	return PipelineRegistry(M{
+		.device = &device,
+		.swapchain_format = swapchain_format,
 		.vfs = &vfs,
-		.pipelines = load_all(vfs),
+		.pipelines = load_all(device, swapchain_format, vfs),
 	});
 }
 
-Pipeline *PipelineRegistry::find(std::string_view name) {
+gfx::Pipeline *PipelineRegistry::find(std::string_view name) {
 	auto it = m.pipelines.find(std::string(name));
-	return it == m.pipelines.end() ? nullptr : &it->second;
+	return it == m.pipelines.end() ? nullptr : &it->second.pipeline;
 }
 
-Pipeline &PipelineRegistry::at(std::string_view name) {
-	return m.pipelines.at(std::string(name));
+gfx::Pipeline &PipelineRegistry::at(std::string_view name) {
+	return m.pipelines.at(std::string(name)).pipeline;
+}
+
+const MaterialLayout *PipelineRegistry::find_material_layout(
+	std::string_view name
+) const {
+	auto it = m.pipelines.find(std::string(name));
+	return it == m.pipelines.end() ? nullptr : &it->second.material_layout;
 }
 
 void PipelineRegistry::rebuild_all() {
-	device().deviceWaitIdle();
-	std::map<std::string, Pipeline> replacements;
+	m.device->wait_idle();
+	PipelineMap replacements;
 	try {
-		replacements = load_all(*m.vfs);
+		replacements = load_all(*m.device, m.swapchain_format, *m.vfs);
 	} catch(const std::exception &error) {
 		spdlog::error(
 			"PipelineRegistry: reload failed; retaining all existing pipelines: {}",

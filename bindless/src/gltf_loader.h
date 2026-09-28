@@ -6,13 +6,18 @@
 
 class VFS;
 class MaterialRegistry;
+namespace gfx { class Device; }
 
 class GLTFLoader {
 public:
 	GLTFLoader() = delete;
 
 	// Load a raw glTF/GLB and immediately upload it as a renderable model.
-	static Model load(VFS &vfs, const std::string &path);
+	static Model load(
+		gfx::Device &device,
+		VFS &vfs,
+		const std::string &path
+	);
 
 	// Load a model TOML sidecar, resolving its glTF source, material slots,
 	// default material, and model-space scale before uploading the model.

@@ -10,6 +10,7 @@
 class PipelineRegistry;
 class TextureRegistry;
 class VFS;
+namespace gfx { class Device; }
 
 class MaterialRegistry {
 	struct M {
@@ -35,6 +36,7 @@ public:
 		PipelineRegistry &pipelines,
 		TextureRegistry &textures
 	);
+	gfx::Device &device() const;
 
 	Material &load(const std::filesystem::path &path);
 

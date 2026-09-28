@@ -451,8 +451,12 @@ ModelData load_data(VFS &vfs, const std::string &path) {
 
 } // namespace
 
-Model GLTFLoader::load(VFS &vfs, const std::string &path) {
-	return Model::create(load_data(vfs, path));
+Model GLTFLoader::load(
+	gfx::Device &device,
+	VFS &vfs,
+	const std::string &path
+) {
+	return Model::create(device, load_data(vfs, path));
 }
 
 Model GLTFLoader::load_toml(
@@ -549,6 +553,7 @@ Model GLTFLoader::load_toml(
 	}
 
 	return Model::create(
+		material_registry.device(),
 		std::move(data),
 		std::move(materials),
 		glm::scale(glm::mat4(1.0f), manifest.scale)

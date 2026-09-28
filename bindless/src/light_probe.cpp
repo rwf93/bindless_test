@@ -8,20 +8,13 @@
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#include "texture_2d.h"
-#include "texture_2d_array.h"
-#include "texture_cube.h"
+#include "gfx/texture/texture.h"
 #include "texture_registry.h"
 
 namespace {
 
 uint32_t full_mip_count(uint32_t resolution) {
-	uint32_t count = 1;
-	while(resolution > 1) {
-		resolution >>= 1;
-		count++;
-	}
-	return count;
+	return static_cast<uint32_t>(std::floor(std::log2(std::max(resolution, resolution)))) + 1;
 }
 
 } // namespace
@@ -42,38 +35,38 @@ LightProbe LightProbe::create(
 	const std::string diffuse_name = name + "_diffuse";
 	const std::string depth_name = name + "_depth";
 
-	textures.create<TextureCube>(
-		resolution,
-		1,
-		VK_FORMAT_R16G16B16A16_SFLOAT,
-		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-		capture_name
-	);
-	textures.create<TextureCube>(
-		resolution,
-		full_mip_count(resolution),
-		VK_FORMAT_R16G16B16A16_SFLOAT,
-		VK_IMAGE_USAGE_STORAGE_BIT,
-		specular_name
-	);
-	textures.create<TextureCube>(
-		irradiance_resolution,
-		1,
-		VK_FORMAT_R16G16B16A16_SFLOAT,
-		VK_IMAGE_USAGE_STORAGE_BIT,
-		diffuse_name
-	);
-	textures.create<Texture2DArray>(
-		resolution,
-		resolution,
-		LIGHT_PROBE_FACE_COUNT,
-		VK_FORMAT_D32_SFLOAT,
-		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-		depth_name
-	);
+	textures.create<gfx::TextureCube>(gfx::TextureCubeDesc{
+		.resolution = resolution,
+		.mip_count = 1,
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		.name = capture_name,
+	});
+	textures.create<gfx::TextureCube>(gfx::TextureCubeDesc{
+		.resolution = resolution,
+		.mip_count = full_mip_count(resolution),
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT,
+		.name = specular_name,
+	});
+	textures.create<gfx::TextureCube>(gfx::TextureCubeDesc{
+		.resolution = irradiance_resolution,
+		.mip_count = 1,
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT,
+		.name = diffuse_name,
+	});
+	textures.create<gfx::Texture2DArray>(gfx::Texture2DArrayDesc{
+		.width = resolution,
+		.height = resolution,
+		.layer_count = LIGHT_PROBE_FACE_COUNT,
+		.format = VK_FORMAT_D32_SFLOAT,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.name = depth_name,
+	});
 	return LightProbe(M{
 		.textures = &textures,
-		.data = MultiBuffer<LightProbeData>::create(),
+		.data = gfx::MultiBuffer<LightProbeData>::create(textures.device()),
 		.name = name,
 		.capture_name = capture_name,
 		.specular_name = specular_name,
@@ -119,36 +112,36 @@ void LightProbe::prepare() {
 	m.data->position = glm::vec4(m.position, 1.0f);
 }
 
-TextureCube &LightProbe::capture() {
-	return m.textures->at_named<TextureCube>(m.capture_name);
+gfx::TextureCube &LightProbe::capture() {
+	return m.textures->at_named<gfx::TextureCube>(m.capture_name);
 }
 
-const TextureCube &LightProbe::capture() const {
-	return m.textures->at_named<TextureCube>(m.capture_name);
+const gfx::TextureCube &LightProbe::capture() const {
+	return m.textures->at_named<gfx::TextureCube>(m.capture_name);
 }
 
-TextureCube &LightProbe::specular() {
-	return m.textures->at_named<TextureCube>(m.specular_name);
+gfx::TextureCube &LightProbe::specular() {
+	return m.textures->at_named<gfx::TextureCube>(m.specular_name);
 }
 
-const TextureCube &LightProbe::specular() const {
-	return m.textures->at_named<TextureCube>(m.specular_name);
+const gfx::TextureCube &LightProbe::specular() const {
+	return m.textures->at_named<gfx::TextureCube>(m.specular_name);
 }
 
-TextureCube &LightProbe::diffuse() {
-	return m.textures->at_named<TextureCube>(m.diffuse_name);
+gfx::TextureCube &LightProbe::diffuse() {
+	return m.textures->at_named<gfx::TextureCube>(m.diffuse_name);
 }
 
-const TextureCube &LightProbe::diffuse() const {
-	return m.textures->at_named<TextureCube>(m.diffuse_name);
+const gfx::TextureCube &LightProbe::diffuse() const {
+	return m.textures->at_named<gfx::TextureCube>(m.diffuse_name);
 }
 
-Texture2DArray &LightProbe::depth() {
-	return m.textures->at_named<Texture2DArray>(m.depth_name);
+gfx::Texture2DArray &LightProbe::depth() {
+	return m.textures->at_named<gfx::Texture2DArray>(m.depth_name);
 }
 
-const Texture2DArray &LightProbe::depth() const {
-	return m.textures->at_named<Texture2DArray>(m.depth_name);
+const gfx::Texture2DArray &LightProbe::depth() const {
+	return m.textures->at_named<gfx::Texture2DArray>(m.depth_name);
 }
 
 void LightProbe::set_position(const glm::vec3 &position) {
@@ -188,19 +181,22 @@ LightProbeSet LightProbeSet::create(
 		throw std::invalid_argument("LightProbeSet::create: BRDF resolution must be greater than zero");
 
 	const std::string brdf_name = name + "_brdf_lut";
-	textures.create<Texture2D>(
-		brdf_resolution,
-		brdf_resolution,
-		VK_FORMAT_R16G16B16A16_SFLOAT,
-		VK_IMAGE_USAGE_STORAGE_BIT,
-		brdf_name
-	);
+	textures.create<gfx::Texture2D>(gfx::Texture2DDesc{
+		.width = brdf_resolution,
+		.height = brdf_resolution,
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT,
+		.name = brdf_name,
+	});
 
 	std::vector<LightProbe> probes;
 	probes.reserve(capacity);
 	return LightProbeSet(M{
 		.textures = &textures,
-		.data = MultiBuffer<ReflectionProbeData>::create(capacity),
+		.data = gfx::MultiBuffer<ReflectionProbeData>::create(
+			textures.device(),
+			capacity
+		),
 		.probes = std::move(probes),
 		.capacity = capacity,
 		.name = name,
@@ -285,10 +281,10 @@ void LightProbeSet::finish_capture(LightProbe &probe) {
 	);
 }
 
-Texture2D &LightProbeSet::brdf_lut() {
-	return m.textures->at_named<Texture2D>(m.brdf_name);
+gfx::Texture2D &LightProbeSet::brdf_lut() {
+	return m.textures->at_named<gfx::Texture2D>(m.brdf_name);
 }
 
-const Texture2D &LightProbeSet::brdf_lut() const {
-	return m.textures->at_named<Texture2D>(m.brdf_name);
+const gfx::Texture2D &LightProbeSet::brdf_lut() const {
+	return m.textures->at_named<gfx::Texture2D>(m.brdf_name);
 }

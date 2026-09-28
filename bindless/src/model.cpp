@@ -57,6 +57,7 @@ bool intersects_frustum(
 } // namespace
 
 Model Model::create(
+	gfx::Device &device,
 	ModelData data,
 	MaterialBindings materials,
 	glm::mat4 model_transform
@@ -97,7 +98,7 @@ Model Model::create(
 		}
 
 		primitives.push_back({
-			.mesh = Mesh::create(primitive.vertices, primitive.indices),
+			.mesh = Mesh::create(device, primitive.vertices, primitive.indices),
 			.material_slot = primitive.material_slot,
 			.bounds_min = bounds_min,
 			.bounds_max = bounds_max,
@@ -113,7 +114,8 @@ Model Model::create(
 		}
 	}
 
-	auto mesh_transforms = MultiBuffer<ObjectData>::create(
+	auto mesh_transforms = gfx::MultiBuffer<ObjectData>::create(
+		device,
 		data.draws.size() * max_instances
 	);
 
@@ -144,11 +146,11 @@ Material &Model::material_for(uint32_t slot) const {
 }
 
 void Model::draw_materials(
-	FrameGraph::PassContext &ctx,
+	gfx::CommandList &commands,
 	PushConstants &constants,
 	Material *override_material,
 	const glm::mat4 &world,
-	Pipeline *override_pipeline,
+	gfx::Pipeline *override_pipeline,
 	uint32_t view_count
 ) {
 	assert(view_count > 0);
@@ -168,9 +170,9 @@ void Model::draw_materials(
 
 		if(material != bound_material) {
 			if(override_pipeline)
-				material->bind(ctx, constants, *override_pipeline);
+				material->bind(commands, constants, *override_pipeline);
 			else
-				material->bind(ctx, constants);
+				material->bind(commands, constants);
 			bound_material = material;
 		}
 
@@ -178,7 +180,7 @@ void Model::draw_materials(
 		m.mesh_transforms[transform_slot].model =
 			world * m.model_transform * draw.local_transform;
 		primitive.mesh.draw(
-			ctx,
+			commands,
 			constants,
 			view_count,
 			transform_slot * view_count
@@ -187,9 +189,9 @@ void Model::draw_materials(
 }
 
 void Model::draw_depth(
-	FrameGraph::PassContext &ctx,
+	gfx::CommandList &commands,
 	PushConstants &constants,
-	Pipeline &pipeline,
+	gfx::Pipeline &pipeline,
 	uint32_t view_count,
 	const glm::mat4 &world
 ) {
@@ -198,7 +200,7 @@ void Model::draw_depth(
 
 	constants.object_handle = m.mesh_transforms.handle();
 	constants.material_handle = UINT32_MAX;
-	ctx.bind_pipeline(pipeline.pipeline());
+	commands.bind_pipeline(pipeline.pipeline());
 
 	const uint32_t base = uint32_t(m.next_instance * m.draws.size());
 	m.next_instance++;
@@ -209,7 +211,7 @@ void Model::draw_depth(
 		m.mesh_transforms[transform_slot].model =
 			world * m.model_transform * draw.local_transform;
 		primitive.mesh.draw(
-			ctx,
+			commands,
 			constants,
 			view_count,
 			transform_slot * view_count
@@ -218,9 +220,9 @@ void Model::draw_depth(
 }
 
 void Model::draw_local_shadow_views(
-	FrameGraph::PassContext &ctx,
+	gfx::CommandList &commands,
 	PushConstants &constants,
-	Pipeline &pipeline,
+	gfx::Pipeline &pipeline,
 	std::span<const LocalShadowView> views,
 	const glm::mat4 &world
 ) {
@@ -234,7 +236,7 @@ void Model::draw_local_shadow_views(
 	assert(m.next_instance < max_instances);
 	constants.object_handle = m.mesh_transforms.handle();
 	constants.material_handle = UINT32_MAX;
-	ctx.bind_pipeline(pipeline.pipeline());
+	commands.bind_pipeline(pipeline.pipeline());
 
 	const uint32_t base = uint32_t(m.next_instance * m.draws.size());
 	m.next_instance++;
@@ -286,7 +288,7 @@ void Model::draw_local_shadow_views(
 			continue;
 
 		primitive.mesh.draw(
-			ctx,
+			commands,
 			constants,
 			visible_view_count,
 			transform_slot * LOCAL_SHADOW_MAX_VIEW_COUNT

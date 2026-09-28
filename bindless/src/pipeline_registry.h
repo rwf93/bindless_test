@@ -6,22 +6,38 @@
 #include <string_view>
 #include <utility>
 
-#include "shader.h"
+#include "gfx/slang/shader.h"
+#include "material_layout.h"
 
 class VFS;
 
 class PipelineRegistry {
+	struct PipelineRecord {
+		gfx::Pipeline pipeline;
+		MaterialLayout material_layout;
+	};
+
+	using PipelineMap = std::map<std::string, PipelineRecord>;
+
 	struct M {
+		gfx::Device *device = nullptr;
+		VkFormat swapchain_format = VK_FORMAT_UNDEFINED;
 		VFS *vfs = nullptr;
-		std::map<std::string, Pipeline> pipelines;
+		PipelineMap pipelines;
 	} m;
 
 	static void load_pipeline(
+		gfx::Device &device,
+		VkFormat swapchain_format,
 		VFS &vfs,
 		const std::filesystem::path &path,
-		std::map<std::string, Pipeline> &pipelines
+		PipelineMap &pipelines
 	);
-	static std::map<std::string, Pipeline> load_all(VFS &vfs);
+	static PipelineMap load_all(
+		gfx::Device &device,
+		VkFormat swapchain_format,
+		VFS &vfs
+	);
 
 	explicit PipelineRegistry(M m) : m(std::move(m)) {}
 
@@ -31,10 +47,16 @@ public:
 	PipelineRegistry(const PipelineRegistry &) = delete;
 	PipelineRegistry &operator=(const PipelineRegistry &) = delete;
 
-	static PipelineRegistry create(VFS &vfs);
+	static PipelineRegistry create(
+		gfx::Device &device,
+		VFS &vfs,
+		VkFormat swapchain_format = VK_FORMAT_UNDEFINED
+	);
+	gfx::Device &device() const { return *m.device; }
 
-	Pipeline *find(std::string_view name);
-	Pipeline &at(std::string_view name);
+	gfx::Pipeline *find(std::string_view name);
+	gfx::Pipeline &at(std::string_view name);
+	const MaterialLayout *find_material_layout(std::string_view name) const;
 
 	void rebuild_all();
 };

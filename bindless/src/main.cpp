@@ -1,24 +1,27 @@
-#include <spdlog/spdlog.h>
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <memory>
+#include <stdexcept>
 #include <vector>
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
 #include <glm/glm.hpp>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
+#include <spdlog/spdlog.h>
 
 #include "camera.h"
-#include "vktools.h"
-#include "vkinfo.h"
-#include "vkcontext.h"
-#include "framegraph.h"
-#include "gpu_buffer.h"
+#include "gfx/device.h"
+#include "gfx/instance.h"
+#include "gfx/present/presentation.h"
+#include "gfx/sdl/surface.h"
+#include "gfx/vkinfo.h"
+#include "gfx/framegraph/framegraph.h"
+#include "gfx/buffer.h"
 #include "light_probe.h"
 #include "local_shadow.h"
 #include "material_registry.h"
@@ -29,10 +32,12 @@
 #include "shader_types.h"
 #include "texture_registry.h"
 #include "vfs.h"
+
+using gfx::FrameGraph;
+using gfx::MultiBuffer;
 #include "cascaded_shadow.h"
 
 static SDL_Event event;
-static uint32_t image_index;
 static bool quit = false;
 static constexpr uint32_t APP_WIDTH = 1600;
 static constexpr uint32_t APP_HEIGHT = 900;
@@ -46,6 +51,24 @@ static_assert(
 	"Local shadow atlas layers exceed the per-object compact view list"
 );
 
+class SDLSession {
+	explicit SDLSession() = default;
+
+public:
+	~SDLSession() { SDL_Quit(); }
+	SDLSession(const SDLSession &) = delete;
+	SDLSession &operator=(const SDLSession &) = delete;
+	SDLSession(SDLSession &&) = delete;
+	SDLSession &operator=(SDLSession &&) = delete;
+
+	static SDLSession create() {
+		if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
+			throw std::runtime_error(SDL_GetError());
+		return SDLSession();
+	}
+};
+
+
 struct EditableLight {
 	LightType type;
 	glm::vec3 position;
@@ -58,6 +81,16 @@ struct EditableLight {
 	bool casts_shadow = true;
 	float shadow_bias = 0.0001f;
 };
+
+static glm::vec3 shadow_light_direction = glm::normalize(glm::vec3(-0.6f, 1.0f, 0.35f));
+static glm::vec3 shadow_light_color = glm::vec3(1.0f, 0.96f, 0.9f);
+static float shadow_light_intensity = 5.0f / 3.0f;
+static std::array<EditableLight, LIGHT_COUNT> editable_lights = {{
+	{LightType::Point, glm::vec3(0, 5, 0), glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(1.0f), 100.0f, 50.0f, 20.0f, 30.0f},
+	{LightType::Point, glm::vec3( 10.0f,  10.0f, 10.0f), glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(1.0f), 100.0f, 50.0f, 20.0f, 30.0f},
+	{LightType::Point, glm::vec3(-10.0f, -10.0f, 10.0f), glm::vec3(0.0f,  1.0f, 0.0f), glm::vec3(1.0f), 100.0f, 50.0f, 20.0f, 30.0f},
+	{LightType::Spot,  glm::vec3(  0.0f,  10.0f, 10.0f), glm::normalize(glm::vec3(0.0f, -10.0f, -10.0f)), glm::vec3(1.0f), 100.0f, 50.0f, 20.0f, 30.0f},
+}};
 
 static bool draw_lighting_widget(
 	glm::vec3 &shadow_direction,
@@ -265,83 +298,125 @@ static void draw_light_probe_widget(LightProbeSet &probe_set) {
 	ImGui::End();
 }
 
-static void set_viewport_and_scissor(VkCommandBuffer command, uint32_t width, uint32_t height) {
-	VkRect2D scissor = {{0, 0}, {width, height}};
-	VkViewport viewport = {0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f};
-	device().cmdSetScissor(command, 0, 1, &scissor);
-	device().cmdSetViewport(command, 0, 1, &viewport);
-}
+static void create_imgui(
+	SDL_Window &window,
+	gfx::Instance &instance,
+	gfx::Device &device,
+	const gfx::Presentation &presentation
+) {
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
 
-// Convenience overload that uses the current frame's command buffer.
-void transition(VkImage image, VkImageLayout current_layout, VkImageLayout new_layout) {
-	transition(
-		vkctx.frames[frame_index].buffer,
-		image,
-		current_layout,
-		new_layout,
-		VK_IMAGE_ASPECT_COLOR_BIT
+	ImGuiIO &io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+	ImGui::StyleColorsDark();
+
+	ImGui_ImplVulkan_LoadFunctions(
+		VK_API_VERSION_1_3,
+		[](const char *function_name, void *user_data) {
+			auto *instance = static_cast<gfx::Instance *>(user_data);
+			return instance->dispatch().getInstanceProcAddr(function_name);
+		},
+		&instance
 	);
+
+	const float display_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+	ImGuiStyle &style = ImGui::GetStyle();
+	style.ScaleAllSizes(display_scale);
+	style.FontScaleDpi = display_scale;
+
+	ImGui_ImplSDL3_InitForVulkan(&window);
+	ImGui_ImplVulkan_InitInfo init = {};
+	init.Instance = instance.native();
+	init.PhysicalDevice = device.physical_device();
+	init.Device = device.native();
+	init.QueueFamily = device.queue_family();
+	init.Queue = device.queue();
+	init.DescriptorPool = device.descriptor_pool();
+	init.MinImageCount = 2;
+	init.ImageCount = presentation.image_count();
+	init.UseDynamicRendering = true;
+	std::vector<VkFormat> attachments = {presentation.format()};
+	init.PipelineInfoMain.PipelineRenderingCreateInfo =
+		info::rendering_create_info(attachments, VK_FORMAT_D32_SFLOAT);
+	ImGui_ImplVulkan_Init(&init);
 }
 
-int main(int argc, char** argv) {
-	if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
-		spdlog::error("Couldn't initalize SDL");
-	}
+int run() {
+	auto sdl = SDLSession::create();
+	std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)> window(
+		SDL_CreateWindow(
+			"bindless",
+			APP_WIDTH,
+			APP_HEIGHT,
+			SDL_WINDOW_VULKAN
+		),
+		&SDL_DestroyWindow
+	);
+	if(!window)
+		throw std::runtime_error(SDL_GetError());
+	SDL_ShowWindow(window.get());
 
-	window = SDL_CreateWindow("fuck", APP_WIDTH, APP_HEIGHT, SDL_WINDOW_VULKAN);
-	SDL_ShowWindow(window);
-
-	create_vk_shit();
-	create_imgui_shit();
+	auto instance = gfx::Instance::create({
+		.application_name = "bindless_test",
+		.engine_name = "bindless",
+	});
+	auto surface = gfx::sdl::Surface::create(instance, *window);
+	auto gpu = gfx::Device::create(instance, {
+		.surface = surface.native(),
+		.frames_in_flight = 3,
+		.graphics = true,
+	});
+	auto presentation = gfx::Presentation::create(
+		gpu,
+		surface.native(),
+		{
+			.width = APP_WIDTH,
+			.height = APP_HEIGHT,
+		}
+	);
+	create_imgui(*window, instance, gpu, presentation);
 
 	auto vfs = VFS::create("../../vfs.toml");
-	auto textures = TextureRegistry::create();
-	auto pipelines = PipelineRegistry::create(vfs);
+	auto textures = TextureRegistry::create(gpu);
+	auto pipelines = PipelineRegistry::create(gpu, vfs, presentation.format());
 	auto materials = MaterialRegistry::create(vfs, pipelines, textures);
 
-	textures.create<Texture2D>(128, 128, VK_FORMAT_R8G8B8A8_UNORM, [](int x, int y) {
-		return ((x / 16) + (y / 16)) % 2 == 0 ? 0x00ff0090u : 0x00000000u;
-	}, "missing");
+	auto &color = textures.create<gfx::Texture2D>(gfx::Texture2DDesc{
+		.width = APP_WIDTH,
+		.height = APP_HEIGHT,
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		.name = "gbuffer_albedo",
+	});
 
-	textures.create<Texture2D>( 1, 1, VK_FORMAT_R8G8B8A8_UNORM, [](int, int) {
-		return 0xff000000u;
-	}, "black");
+	auto &depth = textures.create<gfx::Texture2D>(gfx::Texture2DDesc{
+		.width = APP_WIDTH,
+		.height = APP_HEIGHT,
+		.format = VK_FORMAT_D32_SFLOAT,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.name = "depth",
+	});
 
-	textures.create<Texture2D>(1, 1, VK_FORMAT_R8G8B8A8_UNORM, [](int, int) {
-		return 0xffffffffu;
-	}, "white");
+	auto &cascaded_shadowmap = textures.create<gfx::Texture2DArray>(gfx::Texture2DArrayDesc{
+		.width = SHADOW_MAP_RESOLUTION,
+		.height = SHADOW_MAP_RESOLUTION,
+		.layer_count = SHADOW_CASCADE_COUNT,
+		.format = VK_FORMAT_D16_UNORM,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.name = "cascaded_shadowmap",
+	});
 
-	auto &color = textures.create<Texture2D>(
-		APP_WIDTH, APP_HEIGHT,
-		VK_FORMAT_R16G16B16A16_SFLOAT,
-		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-		"gbuffer_albedo"
-	);
-
-	auto &depth = textures.create<Texture2D>(
-		APP_WIDTH, APP_HEIGHT,
-		VK_FORMAT_D32_SFLOAT,
-		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-		"depth"
-	);
-
-	auto &cascaded_shadowmap = textures.create<Texture2DArray>(
-		SHADOW_MAP_RESOLUTION,
-		SHADOW_MAP_RESOLUTION,
-		SHADOW_CASCADE_COUNT,
-		VK_FORMAT_D16_UNORM,
-		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-		"cascaded_shadowmap"
-	);
-
-	auto &local_shadowmap = textures.create<Texture2DArray>(
-		LOCAL_SHADOW_MAP_RESOLUTION,
-		LOCAL_SHADOW_MAP_RESOLUTION,
-		LIGHT_COUNT * LOCAL_SHADOW_FACE_COUNT,
-		VK_FORMAT_D32_SFLOAT,
-		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-		"local_shadowmap"
-	);
+	auto &local_shadowmap = textures.create<gfx::Texture2DArray>(gfx::Texture2DArrayDesc{
+		.width = LOCAL_SHADOW_MAP_RESOLUTION,
+		.height = LOCAL_SHADOW_MAP_RESOLUTION,
+		.layer_count = LIGHT_COUNT * LOCAL_SHADOW_FACE_COUNT,
+		.format = VK_FORMAT_D32_SFLOAT,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.name = "local_shadowmap",
+	});
 
 	auto light_probes = LightProbeSet::create(
 		textures,
@@ -355,36 +430,30 @@ int main(int argc, char** argv) {
 
 	auto camera = Camera::create();
 
-	glm::vec3 shadow_light_direction = glm::normalize(glm::vec3(-0.6f, 1.0f, 0.35f));
-	glm::vec3 shadow_light_color = glm::vec3(1.0f, 0.96f, 0.9f);
-	float shadow_light_intensity = 5.0f / 3.0f;
-	std::array<EditableLight, LIGHT_COUNT> editable_lights = {{
-		{LightType::Point, glm::vec3(0, 5, 0), glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(1.0f), 100.0f, 50.0f, 20.0f, 30.0f},
-		{LightType::Point, glm::vec3( 10.0f,  10.0f, 10.0f), glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(1.0f), 100.0f, 50.0f, 20.0f, 30.0f},
-		{LightType::Point, glm::vec3(-10.0f, -10.0f, 10.0f), glm::vec3(0.0f,  1.0f, 0.0f), glm::vec3(1.0f), 100.0f, 50.0f, 20.0f, 30.0f},
-		{LightType::Spot,  glm::vec3(  0.0f,  10.0f, 10.0f), glm::normalize(glm::vec3(0.0f, -10.0f, -10.0f)), glm::vec3(1.0f), 100.0f, 50.0f, 20.0f, 30.0f},
-	}};
-
 	/* Scene specific info */
-	auto scene = MultiBuffer<SceneData>::create();
-	auto lights = MultiBuffer<LightData>::create(LIGHT_COUNT);
-	auto local_shadow_matrices = MultiBuffer<LocalShadowMatrixData>::create(LIGHT_COUNT * LOCAL_SHADOW_FACE_COUNT);
+	auto scene = MultiBuffer<SceneData>::create(gpu);
+	auto lights = MultiBuffer<LightData>::create(gpu, LIGHT_COUNT);
+	auto local_shadow_matrices = MultiBuffer<LocalShadowMatrixData>::create(
+		gpu,
+		LIGHT_COUNT * LOCAL_SHADOW_FACE_COUNT
+	);
 
 	auto &missing_unlit = materials.load("materials/missing_unlit.toml");
 	auto &white_unlit = materials.load("materials/white_unlit.toml");
 	auto &white_pbr = materials.load("materials/white_pbr.toml");
 	auto &swapchain_write_material = materials.load("materials/swapchain_write.toml");
+
 	auto &skybox_space = materials.load("materials/skybox_space.toml");
 	auto &skybox_clouds = materials.load("materials/skybox_clouds.toml");
 
 	auto helmet = GLTFLoader::load_toml(vfs, materials, "generated/helmet/DamagedHelmet.model.toml");
 	auto avocado = GLTFLoader::load_toml(vfs, materials, "generated/avocado/Avocado.model.toml");
-	auto sponza = GLTFLoader::load_toml(vfs, materials, "generated/sponza/Sponza.model.toml");
+	//auto sponza = GLTFLoader::load_toml(vfs, materials, "generated/sponza/Sponza.model.toml");
 	//auto flight = GLTFLoader::load_toml(vfs, materials, "generated/flight_helmet/FlightHelmet.model.toml");
 
 	auto scene_renderer = SceneRenderer::create()
 		.add(helmet, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2.0f, 0.0f)))
-		.add(sponza, glm::mat4(1.0f), {.two_sided = true})
+	//	.add(sponza, glm::mat4(1.0f), {.two_sided = true})
 	//	.add(flight,  glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, 0.0f, 0.0f)))
 		.add(avocado, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 5.0f, 0.0f)));
 
@@ -394,25 +463,26 @@ int main(int argc, char** argv) {
 	auto swapchain_target = FrameGraph::ExternalImage::create(
 		"swapchain",
 		FrameGraph::ImageDesc{
-			.format = vkctx.swapchain.image_format,
-			.extent = {APP_WIDTH, APP_HEIGHT, 1},
+			.format = presentation.format(),
+			.extent = {
+				presentation.extent().width,
+				presentation.extent().height,
+				1,
+			},
 		},
 		[&] {
-			return ImageRef{
-				.image = vkctx.swapchain_images[image_index],
-				.view = vkctx.swapchain_views[image_index],
-			};
+			return presentation.image();
 		}
 	);
 
-	auto framegraph = FrameGraph::create()
+	auto framegraph = FrameGraph::create(gpu)
 		.add_render_pass("shadow",
 			[&](FrameGraph::RenderPassBuilder &pass) {
 				pass.read(scene);
 				pass.clear_depth(cascaded_shadowmap);
 			},
-			[&](FrameGraph::PassContext &ctx) {
-				set_viewport_and_scissor(ctx, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION);
+			[&](gfx::CommandList &ctx) {
+				ctx.viewport(SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION);
 
 				PushConstants push_constants = {};
 				push_constants.scene_handle = scene.handle();
@@ -430,12 +500,8 @@ int main(int argc, char** argv) {
 				pass.read(local_shadow_matrices);
 				pass.clear_depth(local_shadowmap);
 			},
-			[&](FrameGraph::PassContext &ctx) {
-				set_viewport_and_scissor(
-					ctx,
-					LOCAL_SHADOW_MAP_RESOLUTION,
-					LOCAL_SHADOW_MAP_RESOLUTION
-				);
+			[&](gfx::CommandList &ctx) {
+				ctx.viewport(LOCAL_SHADOW_MAP_RESOLUTION, LOCAL_SHADOW_MAP_RESOLUTION);
 
 				PushConstants push_constants = {};
 				push_constants.scene_handle = scene.handle();
@@ -470,9 +536,9 @@ int main(int argc, char** argv) {
 				);
 				pass.clear_depth(current_probe->depth());
 			},
-			[&, current_probe](FrameGraph::PassContext &ctx) {
+			[&, current_probe](gfx::CommandList &ctx) {
 				const uint32_t resolution = current_probe->capture().resolution();
-				set_viewport_and_scissor(ctx, resolution, resolution);
+				ctx.viewport(resolution, resolution);
 
 				PushConstants push_constants = {};
 				push_constants.scene_handle = scene.handle();
@@ -485,7 +551,6 @@ int main(int argc, char** argv) {
 					pipelines.at("ibl_probe_sky")
 				);
 				ctx.push_constants(
-					VK_SHADER_STAGE_ALL,
 					&push_constants,
 					sizeof(PushConstants)
 				);
@@ -506,7 +571,7 @@ int main(int argc, char** argv) {
 				pass.read(current_probe->capture());
 				pass.write(current_probe->specular());
 			},
-			[&, current_probe](FrameGraph::PassContext &ctx) {
+			[&, current_probe](gfx::CommandList &ctx) {
 				auto &specular = current_probe->specular();
 				ctx.bind_pipeline(pipelines.at("ibl_specular_prefilter").pipeline());
 				for(uint32_t mip = 0; mip < specular.mip_count(); ++mip) {
@@ -524,7 +589,6 @@ int main(int argc, char** argv) {
 					};
 
 					ctx.push_constants(
-						VK_SHADER_STAGE_ALL,
 						&constants,
 						sizeof(constants)
 					);
@@ -545,7 +609,7 @@ int main(int argc, char** argv) {
 				pass.read(current_probe->capture());
 				pass.write(current_probe->diffuse());
 			},
-			[&, current_probe](FrameGraph::PassContext &ctx) {
+			[&, current_probe](gfx::CommandList &ctx) {
 				auto &diffuse = current_probe->diffuse();
 
 				IBLIrradianceConstants constants {
@@ -558,7 +622,6 @@ int main(int argc, char** argv) {
 
 				ctx.bind_pipeline(pipelines.at("ibl_diffuse_convolution").pipeline());
 				ctx.push_constants(
-					VK_SHADER_STAGE_ALL,
 					&constants,
 					sizeof(constants)
 				);
@@ -577,7 +640,7 @@ int main(int argc, char** argv) {
 				pass.enabled_if([&] { return light_probes.needs_brdf_lut(); });
 				pass.write(light_probes.brdf_lut());
 			},
-			[&](FrameGraph::PassContext &ctx) {
+			[&](gfx::CommandList &ctx) {
 				const auto extent = light_probes.brdf_lut().image().desc.extent;
 				IBLBRDFConstants constants {
 					.output_handle = light_probes.brdf_lut().handle(),
@@ -588,7 +651,6 @@ int main(int argc, char** argv) {
 
 				ctx.bind_pipeline(pipelines.at("ibl_brdf_lut").pipeline());
 				ctx.push_constants(
-					VK_SHADER_STAGE_ALL,
 					&constants,
 					sizeof(constants)
 				);
@@ -604,8 +666,8 @@ int main(int argc, char** argv) {
 				pass.read(scene);
 				pass.clear_depth(depth);
 			},
-			[&](FrameGraph::PassContext &ctx) {
-				set_viewport_and_scissor(ctx, APP_WIDTH, APP_HEIGHT);
+			[&](gfx::CommandList &ctx) {
+				ctx.viewport(APP_WIDTH, APP_HEIGHT);
 
 				PushConstants push_constants = {};
 				push_constants.scene_handle = scene.handle();
@@ -635,8 +697,8 @@ int main(int argc, char** argv) {
 				pass.clear_color(color, {0.0f, 0.0f, 0.0f, 1.0f});
 				pass.load_depth(depth);
 			},
-			[&](FrameGraph::PassContext &ctx){
-				set_viewport_and_scissor(ctx, APP_WIDTH, APP_HEIGHT);
+			[&](gfx::CommandList &ctx){
+				ctx.viewport(APP_WIDTH, APP_HEIGHT);
 
 				PushConstants push_constants 	= {};
 				push_constants.scene_handle 	= scene.handle();
@@ -650,15 +712,14 @@ int main(int argc, char** argv) {
 				pass.load_color(color);
 				pass.load_depth(depth);
 			},
-			[&](FrameGraph::PassContext &ctx) {
-				set_viewport_and_scissor(ctx, APP_WIDTH, APP_HEIGHT);
+			[&](gfx::CommandList &ctx) {
+				ctx.viewport(APP_WIDTH, APP_HEIGHT);
 
 				PushConstants push_constants = {};
 				push_constants.scene_handle = scene.handle();
 
 				skybox_clouds.bind(ctx, push_constants);
 				ctx.push_constants(
-					VK_SHADER_STAGE_ALL,
 					&push_constants,
 					sizeof(PushConstants)
 				);
@@ -668,18 +729,12 @@ int main(int argc, char** argv) {
 		.add_render_pass("swapchain_write",
 			[&](FrameGraph::RenderPassBuilder &pass) {
 				pass.read(color);
-				pass.read(scene);
 				pass.clear_color(swapchain_target, {0.0f, 0.0f, 0.0f, 1.0f});
 			},
-			[&](FrameGraph::PassContext &ctx){
+			[&](gfx::CommandList &ctx){
 				PushConstants push_constants = {};
-				push_constants.vbo_handle 						= UINT32_MAX;
-				push_constants.ibo_handle						= UINT32_MAX;
-				push_constants.scene_handle 					= scene.handle();
-				push_constants.object_handle 					= UINT32_MAX;
-
 				swapchain_write_material.bind(ctx, push_constants);
-				ctx.push_constants(VK_SHADER_STAGE_ALL, &push_constants, sizeof(PushConstants));
+				ctx.push_constants(&push_constants, sizeof(PushConstants));
 				ctx.draw(3);
 			}
 		)
@@ -687,9 +742,9 @@ int main(int argc, char** argv) {
 			[&](FrameGraph::RenderPassBuilder &pass) {
 				pass.load_color(swapchain_target);
 			},
-			[&](FrameGraph::PassContext &ctx){
+			[&](gfx::CommandList &ctx){
 				ImDrawData* draw_data = ImGui::GetDrawData();
-				ImGui_ImplVulkan_RenderDrawData(draw_data, ctx);
+				ImGui_ImplVulkan_RenderDrawData(draw_data, ctx.native());
 			}
 		)
 		.compile();
@@ -698,7 +753,7 @@ int main(int argc, char** argv) {
 		while(SDL_PollEvent(&event)) {
 			if(event.type == SDL_EVENT_QUIT)
 				quit = true;
-			camera.process_event(&event, window);
+			camera.process_event(&event, window.get());
 			ImGui_ImplSDL3_ProcessEvent(&event);
 
 			if(event.type == SDL_EVENT_KEY_DOWN)
@@ -730,9 +785,6 @@ int main(int argc, char** argv) {
 		ImGui::ShowDemoWindow();
 		ImGui::Render();
 
-		VK_CHECK(device().waitForFences(1, &vkctx.frames[frame_index].fence, VK_TRUE, UINT64_MAX));
-		VK_CHECK(device().resetFences(1, &vkctx.frames[frame_index].fence));
-		VK_CHECK(device().resetCommandBuffer(vkctx.frames[frame_index].buffer, 0));
 		light_probes.prepare();
 
 		local_shadow_views.clear();
@@ -788,10 +840,9 @@ int main(int argc, char** argv) {
 		scene->projection = glm::perspectiveRH_ZO(CAMERA_FOV, aspect_ratio, CAMERA_NEAR, CAMERA_FAR);
 		scene->projection[1][1] *= -1.0f;
 		scene->view = camera.get_view_matrix();
-		scene->camera_position = glm::vec4(camera.get_position(), 1.0f);
-
+		scene->camera_position = glm::vec4(camera.position(), 1.0f);
 		const auto cascades = build_cascaded_shadow_data(
-			camera.get_position(),
+			camera.position(),
 			camera.get_rotation_matrix(),
 			CAMERA_FOV,
 			aspect_ratio,
@@ -819,54 +870,38 @@ int main(int argc, char** argv) {
 		scene->ibl_brdf_lut_handle = light_probes.brdf_lut().handle();
 		scene->ibl_padding = glm::vec2(0.0f);
 
-		device().acquireNextImageKHR(
-			vkctx.swapchain,
-			UINT64_MAX,
-			vkctx.frames[frame_index].acquire,
-			VK_NULL_HANDLE,
-			&image_index
-		);
+		auto commands = presentation.begin_frame();
 
-		static VkCommandBufferBeginInfo begin_info = {};
-		begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-
-		device().beginCommandBuffer(vkctx.frames[frame_index].buffer, &begin_info);
-
-		set_viewport_and_scissor(vkctx.frames[frame_index].buffer, APP_WIDTH, APP_HEIGHT);
-
-		framegraph.execute(vkctx.frames[frame_index].buffer);
+		commands.viewport(APP_WIDTH, APP_HEIGHT);
+		framegraph.execute(commands);
 
 		// Transition swapchain target to be presentable (todo maybe make framegraph do this for me instead?)
-		transition(vkctx.swapchain_images[image_index], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-
-		device().endCommandBuffer(vkctx.frames[frame_index].buffer);
-
-		auto command_info = info::command_buffer_submit_info(vkctx.frames[frame_index].buffer);
-		auto wait_info = info::semaphore_submit_info(
-			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
-			vkctx.frames[frame_index].acquire
+		commands.transition(
+			presentation.image().image,
+			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+			VK_IMAGE_ASPECT_COLOR_BIT
 		);
-		auto signal_info = info::semaphore_submit_info(
-			VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-			vkctx.frames[frame_index].submit
-		);
-
-		auto submit_info = info::submit_info(&command_info, &signal_info, &wait_info);
-		VK_CHECK(device().queueSubmit2(vkctx.device.get_queue(vkb::QueueType::graphics).value(), 1, &submit_info, vkctx.frames[frame_index].fence));
-
-		VkPresentInfoKHR present_info = {};
-		present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-		present_info.pSwapchains = &vkctx.swapchain.swapchain;
-		present_info.swapchainCount = 1;
-		present_info.pWaitSemaphores = &vkctx.frames[frame_index].submit;
-		present_info.waitSemaphoreCount = 1;
-		present_info.pImageIndices = &image_index;
-
-		VK_CHECK(device().queuePresentKHR(vkctx.device.get_queue(vkb::QueueType::graphics).value(), &present_info));
-
-		frame_index = (frame_index + 1) % vkctx.max_frames;
+		presentation.end_frame();
 	}
 
-	VK_CHECK(device().deviceWaitIdle());
+	gpu.wait_idle();
+	ImGui_ImplVulkan_Shutdown();
+	ImGui_ImplSDL3_Shutdown();
+	ImGui::DestroyContext();
+
+	return 0;
+}
+
+int main(int argc, char** argv) {
+	try {
+		return run();
+	} catch(const std::exception &error) {
+		spdlog::error("{}", error.what());
+		return 1;
+	} catch(...) {
+		return 1;
+	}
+
 	return 0;
 }

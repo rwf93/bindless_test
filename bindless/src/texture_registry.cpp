@@ -5,7 +5,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "create_utils.h"
+#include "gfx/create_utils.h"
 
 namespace {
 
@@ -44,176 +44,148 @@ Texture &emplace_named(
 
 } // namespace
 
-TextureRegistry TextureRegistry::create() {
-	return TextureRegistry(M{});
-}
-
-Texture2D &TextureRegistry::create_impl(
-	std::type_identity<Texture2D>,
-	uint32_t width,
-	uint32_t height,
-	VkFormat format,
-	std::function<uint32_t(int x, int y)> function,
-	const std::string &name
-) {
-	return emplace_named(m.named_2d, name, "Texture2D", [&] {
-		return Texture2D::create(
-			width,
-			height,
-			format,
-			function,
-			name
+TextureRegistry TextureRegistry::create(gfx::Device &device) {
+	std::unordered_map<std::string, gfx::Texture2D> builtins;
+	emplace_named(builtins, "missing", "Texture2D", [&] {
+		return gfx::Texture2D::generate(
+			device,
+			gfx::Texture2DDesc{
+				.width = 128,
+				.height = 128,
+				.format = VK_FORMAT_R8G8B8A8_UNORM,
+				.name = "missing",
+			},
+			[](int x, int y) {
+				return ((x / 16) + (y / 16)) % 2 == 0
+					? 0x00ff0090u
+					: 0x00000000u;
+			}
 		);
 	});
-}
-
-Texture2D &TextureRegistry::create_impl(
-	std::type_identity<Texture2D>,
-	uint32_t width,
-	uint32_t height,
-	VkFormat format,
-	std::span<const std::byte> data,
-	const std::string &name
-) {
-	return emplace_named(m.named_2d, name, "Texture2D", [&] {
-		return Texture2D::create(width, height, format, data, name);
+	emplace_named(builtins, "black", "Texture2D", [&] {
+		return gfx::Texture2D::generate(
+			device,
+			gfx::Texture2DDesc{
+				.width = 1,
+				.height = 1,
+				.format = VK_FORMAT_R8G8B8A8_UNORM,
+				.name = "black",
+			},
+			[](int, int) { return 0xff000000u; }
+		);
+	});
+	emplace_named(builtins, "white", "Texture2D", [&] {
+		return gfx::Texture2D::generate(
+			device,
+			gfx::Texture2DDesc{
+				.width = 1,
+				.height = 1,
+				.format = VK_FORMAT_R8G8B8A8_UNORM,
+				.name = "white",
+			},
+			[](int, int) { return 0xffffffffu; }
+		);
+	});
+	return TextureRegistry(M{
+		.device = &device,
+		.named_2d = std::move(builtins),
 	});
 }
 
-Texture2D &TextureRegistry::create_impl(
-	std::type_identity<Texture2D>,
-	uint32_t width,
-	uint32_t height,
-	VkFormat format,
-	VkImageUsageFlags usage,
-	const std::string &name
+gfx::Texture2D &TextureRegistry::create_impl(
+	std::type_identity<gfx::Texture2D>,
+	const gfx::Texture2DDesc &desc,
+	std::function<uint32_t(int x, int y)> function
 ) {
-	return emplace_named(m.named_2d, name, "Texture2D", [&] {
-		return Texture2D::create_empty(width, height, format, usage, name);
+	return emplace_named(m.named_2d, desc.name, "Texture2D", [&] {
+		return gfx::Texture2D::generate(*m.device, desc, function);
 	});
 }
 
-Texture2DArray &TextureRegistry::create_impl(
-	std::type_identity<Texture2DArray>,
-	uint32_t width,
-	uint32_t height,
-	uint32_t layer_count,
-	VkFormat format,
-	VkImageUsageFlags usage,
-	const std::string &name
+gfx::Texture2D &TextureRegistry::create_impl(
+	std::type_identity<gfx::Texture2D>,
+	const gfx::Texture2DDesc &desc,
+	std::span<const std::byte> data
+) {
+	return emplace_named(m.named_2d, desc.name, "Texture2D", [&] {
+		return gfx::Texture2D::create(*m.device, desc, data);
+	});
+}
+
+gfx::Texture2D &TextureRegistry::create_impl(
+	std::type_identity<gfx::Texture2D>,
+	const gfx::Texture2DDesc &desc
+) {
+	return emplace_named(m.named_2d, desc.name, "Texture2D", [&] {
+		return gfx::Texture2D::create(*m.device, desc);
+	});
+}
+
+gfx::Texture2DArray &TextureRegistry::create_impl(
+	std::type_identity<gfx::Texture2DArray>,
+	const gfx::Texture2DArrayDesc &desc
 ) {
 	return emplace_named(
 		m.named_2d_arrays,
-		name,
+		desc.name,
 		"Texture2DArray",
 		[&] {
-			return Texture2DArray::create_empty(
-				width,
-				height,
-				layer_count,
-				format,
-				usage,
-				name
-			);
+			return gfx::Texture2DArray::create(*m.device, desc);
 		}
 	);
 }
 
-Texture3D &TextureRegistry::create_impl(
-	std::type_identity<Texture3D>,
-	uint32_t width,
-	uint32_t height,
-	uint32_t depth,
-	VkFormat format,
-	std::function<uint32_t(int x, int y, int z)> function,
-	const std::string &name
+gfx::Texture3D &TextureRegistry::create_impl(
+	std::type_identity<gfx::Texture3D>,
+	const gfx::Texture3DDesc &desc,
+	std::function<uint32_t(int x, int y, int z)> function
 ) {
-	return emplace_named(m.named_3d, name, "Texture3D", [&] {
-		return Texture3D::create(
-			width,
-			height,
-			depth,
-			format,
-			function,
-			name
-		);
+	return emplace_named(m.named_3d, desc.name, "Texture3D", [&] {
+		return gfx::Texture3D::generate(*m.device, desc, function);
 	});
 }
 
-Texture3D &TextureRegistry::create_impl(
-	std::type_identity<Texture3D>,
-	uint32_t width,
-	uint32_t height,
-	uint32_t depth,
-	VkFormat format,
-	std::span<const std::byte> data,
-	const std::string &name
+gfx::Texture3D &TextureRegistry::create_impl(
+	std::type_identity<gfx::Texture3D>,
+	const gfx::Texture3DDesc &desc,
+	std::span<const std::byte> data
 ) {
-	return emplace_named(m.named_3d, name, "Texture3D", [&] {
-		return Texture3D::create(
-			width,
-			height,
-			depth,
-			format,
-			data,
-			name
-		);
+	return emplace_named(m.named_3d, desc.name, "Texture3D", [&] {
+		return gfx::Texture3D::create(*m.device, desc, data);
 	});
 }
 
-Texture3D &TextureRegistry::create_impl(
-	std::type_identity<Texture3D>,
-	uint32_t width,
-	uint32_t height,
-	uint32_t depth,
-	VkFormat format,
-	VkImageUsageFlags usage,
-	const std::string &name
+gfx::Texture3D &TextureRegistry::create_impl(
+	std::type_identity<gfx::Texture3D>,
+	const gfx::Texture3DDesc &desc
 ) {
-	return emplace_named(m.named_3d, name, "Texture3D", [&] {
-		return Texture3D::create_empty(
-			width,
-			height,
-			depth,
-			format,
-			usage,
-			name
-		);
+	return emplace_named(m.named_3d, desc.name, "Texture3D", [&] {
+		return gfx::Texture3D::create(*m.device, desc);
 	});
 }
 
-TextureCube &TextureRegistry::create_impl(
-	std::type_identity<TextureCube>,
-	uint32_t resolution,
-	uint32_t mip_count,
-	VkFormat format,
-	VkImageUsageFlags usage,
-	const std::string &name
+gfx::TextureCube &TextureRegistry::create_impl(
+	std::type_identity<gfx::TextureCube>,
+	const gfx::TextureCubeDesc &desc
 ) {
-	return emplace_named(m.named_cubes, name, "TextureCube", [&] {
-		return TextureCube::create_empty(
-			resolution,
-			mip_count,
-			format,
-			usage,
-			name
-		);
+	return emplace_named(m.named_cubes, desc.name, "TextureCube", [&] {
+		return gfx::TextureCube::create(*m.device, desc);
 	});
 }
 
-Texture2D &TextureRegistry::load_2d(
+gfx::Texture2D &TextureRegistry::load_2d(
 	const std::filesystem::path &path,
-	TextureColorSpace color_space
+	gfx::TextureColorSpace color_space
 ) {
 	const std::filesystem::path resolved =
 		std::filesystem::absolute(path).lexically_normal();
 	std::string key = resolved.generic_string();
-	key += color_space == TextureColorSpace::SRGB ? "|srgb" : "|linear";
+	key += color_space == gfx::TextureColorSpace::SRGB ? "|srgb" : "|linear";
 
 	auto entry = m.cached_2d.try_emplace(
 		key,
 		with_result_of([&] {
-			return Texture2D::load_file(resolved, color_space);
+			return gfx::STBTextureLoader::load(*m.device, resolved, color_space);
 		})
 	).first;
 	return entry->second;
