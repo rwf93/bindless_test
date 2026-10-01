@@ -49,14 +49,23 @@ public:
 	SceneRenderer &add(
 		Model &model,
 		const glm::mat4 &transform = glm::mat4(1.0f),
-		InstanceOptions options = {}
+		InstanceOptions options = InstanceOptions{
+			.material_override = nullptr,
+			.two_sided = false,
+			.casts_shadow = true,
+			.captured_by_probes = true,
+		}
 	) &;
 	SceneRenderer &&add(
 		Model &model,
 		const glm::mat4 &transform = glm::mat4(1.0f),
-		InstanceOptions options = {}
+		InstanceOptions options = InstanceOptions{
+			.material_override = nullptr,
+			.two_sided = false,
+			.casts_shadow = true,
+			.captured_by_probes = true,
+		}
 	) &&;
-
 
 	SceneRenderer &set_skybox(Material &skybox) &;
 	SceneRenderer &&set_skybox(Material &skybox) &&;

@@ -6,6 +6,7 @@
 #include "gfx/device.h"
 #include "gfx/detail/types.h"
 #include "gfx/texture/texture_internal.h"
+#include "gfx/upload_batch.h"
 
 namespace gfx {
 namespace {
@@ -34,6 +35,17 @@ Texture3D Texture3D::generate(
 	const Texture3DDesc &desc,
 	const std::function<uint32_t(int x, int y, int z)> &function
 ) {
+	auto upload = UploadBatch::create(device);
+	auto result = generate(upload, desc, function);
+	upload.submit().wait();
+	return result;
+}
+
+Texture3D Texture3D::generate(
+	UploadBatch &upload,
+	const Texture3DDesc &desc,
+	const std::function<uint32_t(int x, int y, int z)> &function
+) {
 	std::vector<uint32_t> data(size_t(desc.width) * desc.height * desc.depth);
 	for(uint32_t z = 0; z < desc.depth; z++) {
 		for(uint32_t y = 0; y < desc.height; y++) {
@@ -43,7 +55,7 @@ Texture3D Texture3D::generate(
 			}
 		}
 	}
-	return create(device, desc, std::as_bytes(std::span(data)));
+	return create(upload, desc, std::as_bytes(std::span(data)));
 }
 
 Texture3D Texture3D::create(
@@ -51,6 +63,18 @@ Texture3D Texture3D::create(
 	const Texture3DDesc &desc,
 	std::span<const std::byte> data
 ) {
+	auto upload = UploadBatch::create(device);
+	auto result = create(upload, desc, data);
+	upload.submit().wait();
+	return result;
+}
+
+Texture3D Texture3D::create(
+	UploadBatch &upload,
+	const Texture3DDesc &desc,
+	std::span<const std::byte> data
+) {
+	Device &device = upload.device();
 	const size_t expected_size =
 		size_t(desc.width) * desc.height * desc.depth * sizeof(uint32_t);
 	if(data.size_bytes() != expected_size) {
@@ -59,22 +83,19 @@ Texture3D Texture3D::create(
 		);
 	}
 
-	auto image = texture_detail::create_image(
+	auto image = Image::create(
 		device,
 		texture_3d_desc(
 			desc.width,
 			desc.height,
 			desc.depth,
 			desc.format,
-			desc.usage |
-				TextureUsage::TransferDestination |
-				TextureUsage::Sampled
-		),
-		VK_IMAGE_LAYOUT_GENERAL
+			desc.usage | TextureUsage::TransferDestination
+		)
 	);
 	const ImageRef ref = image.ref();
 	texture_detail::upload_image(
-		device,
+		upload,
 		ref,
 		{desc.width, desc.height, desc.depth},
 		detail::to_vk_format(desc.format),
@@ -92,14 +113,22 @@ Texture3D Texture3D::create(
 }
 
 Texture3D Texture3D::create(Device &device, const Texture3DDesc &desc) {
+	auto upload = UploadBatch::create(device);
+	auto result = create(upload, desc);
+	upload.submit().wait();
+	return result;
+}
+
+Texture3D Texture3D::create(UploadBatch &upload, const Texture3DDesc &desc) {
+	Device &device = upload.device();
 	auto image = texture_detail::create_image(
-		device,
+		upload,
 		texture_3d_desc(
 			desc.width,
 			desc.height,
 			desc.depth,
 			desc.format,
-			desc.usage | TextureUsage::Sampled
+			desc.usage
 		),
 		VK_IMAGE_LAYOUT_GENERAL
 	);

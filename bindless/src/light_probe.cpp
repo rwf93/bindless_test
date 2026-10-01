@@ -25,6 +25,19 @@ LightProbe LightProbe::create(
 	uint32_t resolution,
 	uint32_t irradiance_resolution
 ) {
+	auto upload = gfx::UploadBatch::create(textures.device());
+	auto result = create(upload, textures, name, resolution, irradiance_resolution);
+	upload.submit().wait();
+	return result;
+}
+
+LightProbe LightProbe::create(
+	gfx::UploadBatch &upload,
+	TextureRegistry &textures,
+	const std::string &name,
+	uint32_t resolution,
+	uint32_t irradiance_resolution
+) {
 	if(name.empty())
 		throw std::invalid_argument("LightProbe::create: name must not be empty");
 	if(resolution == 0 || irradiance_resolution == 0)
@@ -35,28 +48,28 @@ LightProbe LightProbe::create(
 	const std::string diffuse_name = name + "_diffuse";
 	const std::string depth_name = name + "_depth";
 
-	textures.create<gfx::TextureCube>(gfx::TextureCubeDesc{
+	textures.create<gfx::TextureCube>(upload, gfx::TextureCubeDesc{
 		.resolution = resolution,
 		.mip_count = 1,
 		.format = gfx::Format::R16G16B16A16Float,
 		.usage = gfx::TextureUsage::ColorAttachment,
 		.name = capture_name,
 	});
-	textures.create<gfx::TextureCube>(gfx::TextureCubeDesc{
+	textures.create<gfx::TextureCube>(upload, gfx::TextureCubeDesc{
 		.resolution = resolution,
 		.mip_count = full_mip_count(resolution),
 		.format = gfx::Format::R16G16B16A16Float,
 		.usage = gfx::TextureUsage::Storage,
 		.name = specular_name,
 	});
-	textures.create<gfx::TextureCube>(gfx::TextureCubeDesc{
+	textures.create<gfx::TextureCube>(upload, gfx::TextureCubeDesc{
 		.resolution = irradiance_resolution,
 		.mip_count = 1,
 		.format = gfx::Format::R16G16B16A16Float,
 		.usage = gfx::TextureUsage::Storage,
 		.name = diffuse_name,
 	});
-	textures.create<gfx::Texture2DArray>(gfx::Texture2DArrayDesc{
+	textures.create<gfx::Texture2DArray>(upload, gfx::Texture2DArrayDesc{
 		.width = resolution,
 		.height = resolution,
 		.layer_count = LIGHT_PROBE_FACE_COUNT,
@@ -173,6 +186,19 @@ LightProbeSet LightProbeSet::create(
 	size_t capacity,
 	uint32_t brdf_resolution
 ) {
+	auto upload = gfx::UploadBatch::create(textures.device());
+	auto result = create(upload, textures, name, capacity, brdf_resolution);
+	upload.submit().wait();
+	return result;
+}
+
+LightProbeSet LightProbeSet::create(
+	gfx::UploadBatch &upload,
+	TextureRegistry &textures,
+	const std::string &name,
+	size_t capacity,
+	uint32_t brdf_resolution
+) {
 	if(name.empty())
 		throw std::invalid_argument("LightProbeSet::create: name must not be empty");
 	if(capacity == 0)
@@ -181,7 +207,7 @@ LightProbeSet LightProbeSet::create(
 		throw std::invalid_argument("LightProbeSet::create: BRDF resolution must be greater than zero");
 
 	const std::string brdf_name = name + "_brdf_lut";
-	textures.create<gfx::Texture2D>(gfx::Texture2DDesc{
+	textures.create<gfx::Texture2D>(upload, gfx::Texture2DDesc{
 		.width = brdf_resolution,
 		.height = brdf_resolution,
 		.format = gfx::Format::R16G16B16A16Float,
@@ -209,6 +235,18 @@ LightProbe &LightProbeSet::add(
 	uint32_t resolution,
 	uint32_t irradiance_resolution
 ) {
+	auto upload = gfx::UploadBatch::create(m.textures->device());
+	LightProbe &result = add(upload, name, resolution, irradiance_resolution);
+	upload.submit().wait();
+	return result;
+}
+
+LightProbe &LightProbeSet::add(
+	gfx::UploadBatch &upload,
+	const std::string &name,
+	uint32_t resolution,
+	uint32_t irradiance_resolution
+) {
 	if(m.probes.size() >= m.capacity) {
 		throw std::runtime_error(
 			"LightProbeSet::add: probe capacity exceeded for '" + m.name + "'"
@@ -216,6 +254,7 @@ LightProbe &LightProbeSet::add(
 	}
 	m.probes.emplace_back(with_result_of([&] {
 		return LightProbe::create(
+			upload,
 			*m.textures,
 			name,
 			resolution,

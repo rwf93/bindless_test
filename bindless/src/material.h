@@ -26,6 +26,7 @@ class Material {
 	friend class MaterialRegistry;
 
 	static Material create_impl(
+		gfx::UploadBatch &upload,
 		gfx::Pipeline &pipeline,
 		const MaterialLayout &layout,
 		const MaterialParam *params,
@@ -38,7 +39,20 @@ class Material {
 		const MaterialLayout &layout,
 		const Range &params
 	) {
-		return create_impl(pipeline, layout, params.data(), params.size());
+		auto upload = gfx::UploadBatch::create(pipeline.device());
+		auto result = create_impl(upload, pipeline, layout, params.data(), params.size());
+		upload.submit().wait();
+		return result;
+	}
+
+	template<typename Range>
+	static Material create(
+		gfx::UploadBatch &upload,
+		gfx::Pipeline &pipeline,
+		const MaterialLayout &layout,
+		const Range &params
+	) {
+		return create_impl(upload, pipeline, layout, params.data(), params.size());
 	}
 
 	static Material create(
@@ -46,7 +60,10 @@ class Material {
 		const MaterialLayout &layout,
 		std::initializer_list<MaterialParam> params
 	) {
-		return create_impl(pipeline, layout, params.begin(), params.size());
+		auto upload = gfx::UploadBatch::create(pipeline.device());
+		auto result = create_impl(upload, pipeline, layout, params.begin(), params.size());
+		upload.submit().wait();
+		return result;
 	}
 
 public:

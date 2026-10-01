@@ -1,6 +1,6 @@
 target("bindless_test")
     set_kind("binary")
-    set_languages("cxx23")
+    set_languages("cxx26")
     set_encodings("utf-8")
 
     add_defines("GLM_ENABLE_EXPERIMENTAL")

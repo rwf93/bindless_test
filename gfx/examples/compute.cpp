@@ -78,17 +78,24 @@ int run() {
 	);
 	auto pipeline = gfx::Pipeline::create_compute(device, program);
 
-	device.submit_and_wait([&](gfx::CommandList &commands) {
+	auto batch = gfx::UploadBatch::create(device);
+	batch.record([&](gfx::CommandList &commands) {
 		commands.set_pipeline(pipeline);
 		const DescriptorHandle handle = {output.handle(), 0};
 		commands.set_root_data(&handle, sizeof(handle));
 		commands.dispatch(1);
 	});
+	auto submission = batch.submit();
 
-	output.invalidate();
 	constexpr std::array<uint32_t, 4> expected = {1, 4, 7, 10};
 	std::cout << "expected: " << expected << "\n";
+	submission.wait();
+	output.invalidate();
 	std::cout << "got: " << output << "\n";
+	for(size_t i = 0; i < expected.size(); i++) {
+		if(output[i] != expected[i])
+			throw std::runtime_error("compute example returned unexpected values");
+	}
 
 	return 0;
 }

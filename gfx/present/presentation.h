@@ -24,7 +24,6 @@ struct PresentationDesc {
 class Presentation {
 	struct Frame {
 		VkFence fence = VK_NULL_HANDLE;
-		VkSemaphore submit = VK_NULL_HANDLE;
 		VkSemaphore acquire = VK_NULL_HANDLE;
 		VkCommandBuffer command = VK_NULL_HANDLE;
 	};
@@ -37,6 +36,7 @@ class Presentation {
 		std::vector<ImageId> image_ids;
 		VkCommandPool command_pool = VK_NULL_HANDLE;
 		std::vector<Frame> frames;
+		std::vector<VkSemaphore> render_finished;
 		uint32_t frame_index = 0;
 		uint32_t image_index = 0;
 		bool recording = false;

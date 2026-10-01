@@ -1,4 +1,4 @@
---set_toolchains("clang-cl")
+set_toolchains("clang-cl")
 add_rules("mode.debug", "mode.release")
 
 add_requires(
@@ -121,6 +121,51 @@ package("slang")
         table.insert(configs, "-DSLANG_ENABLE_SLANG_GLSLANG=" .. (package:config("slang_glslang") and "ON" or "OFF"))
         table.insert(configs, "-DSLANG_SLANG_LLVM_FLAVOR=" .. package:config("slang_llvm_flavor"))
 
+        -- Slang enables -Werror for its Clang targets.  Clang also enables
+        -- C++98-compat diagnostics through -Wpedantic, which makes Slang's
+        -- modern public headers fail as errors even though the sources are
+        -- valid C++20.  Keep that compatibility warning non-fatal only for
+        -- Clang-based package builds.
+        if package:has_tool("cxx", "clang_cl", "clang") then
+            -- Slang RHI promotes every Clang warning to an error.  Clang 20
+            -- reports many valid third-party/header diagnostics that Slang's
+            -- MSVC build does not, so do not make the RHI dependency warning-clean
+            -- as a prerequisite for building the compiler package.
+            io.replace(
+                "external/slang-rhi/CMakeLists.txt",
+                "$<$<CXX_COMPILER_ID:Clang>:-Werror>",
+                "",
+                {plain = true}
+            )
+
+            -- xmake detects the MSVC linker for clang-cl, but its CMake
+            -- package environment does not always carry the VS LIB paths.
+            -- Pass them explicitly so link.exe can find kernel32.lib,
+            -- ucrt.lib, and the MSVC runtime libraries.
+            local find_vstudio = import("detect.sdks.find_vstudio")
+            local vstudio = find_vstudio.main()
+            local latest_vstudio
+            local latest_version = -1
+            for version, candidate in pairs(vstudio or {}) do
+                local numeric_version = tonumber(version)
+                if numeric_version and numeric_version > latest_version and candidate.vcvarsall and candidate.vcvarsall.x64 then
+                    latest_version = numeric_version
+                    latest_vstudio = candidate.vcvarsall.x64
+                end
+            end
+
+            if latest_vstudio and latest_vstudio.LIB then
+                local link_flags = {}
+                for _, libdir in ipairs(path.splitenv(latest_vstudio.LIB)) do
+                    table.insert(link_flags, '/LIBPATH:"' .. path.unix(libdir) .. '"')
+                end
+                local linker_flags = table.concat(link_flags, " ")
+                table.insert(configs, "-DCMAKE_EXE_LINKER_FLAGS=" .. linker_flags)
+                table.insert(configs, "-DCMAKE_SHARED_LINKER_FLAGS=" .. linker_flags)
+                table.insert(configs, "-DCMAKE_MODULE_LINKER_FLAGS=" .. linker_flags)
+            end
+        end
+
         io.replace("CMakeLists.txt", [[find_package(Threads REQUIRED)]], [[find_package(Threads REQUIRED)]], {plain = true})
 
         import("package.tools.cmake").install(package, configs)
@@ -178,4 +223,4 @@ rule("defaults_rule")
 		end
 	end)
 
-includes("gfx", "compute", "bindless", "material-generator")
+includes("gfx", "bindless", "material-generator")

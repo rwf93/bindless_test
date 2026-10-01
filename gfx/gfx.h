@@ -5,4 +5,6 @@
 #include "gfx/instance.h"
 #include "gfx/buffer.h"
 #include "gfx/image.h"
+#include "gfx/raw_buffer.h"
+#include "gfx/upload_batch.h"
 #include "gfx/texture/texture.h"

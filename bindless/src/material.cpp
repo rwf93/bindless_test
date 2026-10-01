@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 Material Material::create_impl(
+	gfx::UploadBatch &upload,
 	gfx::Pipeline &pipeline,
 	const MaterialLayout &layout,
 	const MaterialParam *params,
@@ -58,7 +59,7 @@ Material Material::create_impl(
 	return Material(M{
 		.pipeline = &pipeline,
 		.buffer = gfx::Buffer<uint8_t>::create(
-			pipeline.device(),
+			upload,
 			std::span<const uint8_t>(slot)
 		),
 	});

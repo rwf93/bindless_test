@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "gfx/detail/types.h"
 #include "gfx/vkinfo.h"
 #include "gfx/vktools.h"
 
@@ -43,7 +44,7 @@ Pipeline Pipeline::create_graphics(
 
 	raster_info.polygonMode = VK_POLYGON_MODE_FILL;
 	raster_info.lineWidth = 1.0f;
-	raster_info.cullMode = desc.cull_mode;
+	raster_info.cullMode = detail::to_vk_cull_mode(desc.cull_mode);
 	raster_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
 	multisampling_info.sampleShadingEnable = VK_FALSE;
@@ -71,7 +72,7 @@ Pipeline Pipeline::create_graphics(
 
 	stencil_info.depthTestEnable = desc.depth_test ? VK_TRUE : VK_FALSE;
 	stencil_info.depthWriteEnable = desc.depth_write ? VK_TRUE : VK_FALSE;
-	stencil_info.depthCompareOp = desc.depth_compare;
+	stencil_info.depthCompareOp = detail::to_vk_compare_op(desc.depth_compare);
 	stencil_info.depthBoundsTestEnable = VK_FALSE;
 	stencil_info.stencilTestEnable = VK_FALSE;
 	stencil_info.front = {};
@@ -86,9 +87,13 @@ Pipeline Pipeline::create_graphics(
 	dynamic_info.pDynamicStates = dynamic_states.data();
 	dynamic_info.dynamicStateCount = uint32_t(dynamic_states.size());
 
+	std::vector<VkFormat> color_attachment_formats;
+	color_attachment_formats.reserve(desc.color_attachments.size());
+	for(const Format format : desc.color_attachments)
+		color_attachment_formats.push_back(detail::to_vk_format(format));
 	auto rendering_create_info = info::rendering_create_info(
-		desc.color_attachments,
-		desc.depth_format
+		color_attachment_formats,
+		detail::to_vk_format(desc.depth_format)
 	);
 
 	auto code = program.spirv();

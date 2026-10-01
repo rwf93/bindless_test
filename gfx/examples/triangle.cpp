@@ -8,6 +8,7 @@
 #include <SDL3/SDL.h>
 
 #include "gfx/command_list.h"
+#include "gfx/detail/types.h"
 #include "gfx/device.h"
 #include "gfx/instance.h"
 #include "gfx/present/presentation.h"
@@ -108,7 +109,9 @@ int run() {
 		device,
 		program,
 		gfx::GraphicsPipelineDesc{
-			.color_attachments = {presentation.format()},
+			.color_attachments = {
+				gfx::detail::from_vk_format(presentation.format())
+			},
 			.depth_test = false,
 			.depth_write = false,
 		}

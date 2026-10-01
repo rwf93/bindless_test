@@ -62,6 +62,19 @@ Model Model::create(
 	MaterialBindings materials,
 	glm::mat4 model_transform
 ) {
+	auto upload = gfx::UploadBatch::create(device);
+	auto result = create(upload, std::move(data), std::move(materials), model_transform);
+	upload.submit().wait();
+	return result;
+}
+
+Model Model::create(
+	gfx::UploadBatch &upload,
+	ModelData data,
+	MaterialBindings materials,
+	glm::mat4 model_transform
+) {
+	gfx::Device &device = upload.device();
 	if(data.draws.empty())
 		throw std::runtime_error("Model::create: model has no draws: " + data.source_path);
 	if(!materials.slots.empty() &&
@@ -98,7 +111,7 @@ Model Model::create(
 		}
 
 		primitives.push_back({
-			.mesh = Mesh::create(device, primitive.vertices, primitive.indices),
+			.mesh = Mesh::create(upload, primitive.vertices, primitive.indices),
 			.material_slot = primitive.material_slot,
 			.bounds_min = bounds_min,
 			.bounds_max = bounds_max,

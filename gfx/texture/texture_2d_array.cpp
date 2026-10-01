@@ -3,6 +3,7 @@
 #include "gfx/device.h"
 #include "gfx/detail/types.h"
 #include "gfx/texture/texture_internal.h"
+#include "gfx/upload_batch.h"
 
 namespace gfx {
 
@@ -10,6 +11,17 @@ Texture2DArray Texture2DArray::create(
 	Device &device,
 	const Texture2DArrayDesc &desc
 ) {
+	auto upload = UploadBatch::create(device);
+	auto result = create(upload, desc);
+	upload.submit().wait();
+	return result;
+}
+
+Texture2DArray Texture2DArray::create(
+	UploadBatch &upload,
+	const Texture2DArrayDesc &desc
+) {
+	Device &device = upload.device();
 	if(desc.layer_count == 0) {
 		throw std::invalid_argument(
 			"Texture2DArray::create: layer_count must be greater than zero"
@@ -19,7 +31,7 @@ Texture2DArray Texture2DArray::create(
 	const VkFormat format = detail::to_vk_format(desc.format);
 	const VkImageLayout initial_layout = texture_detail::initial_layout_for(format);
 	auto image = texture_detail::create_image(
-		device,
+		upload,
 		ImageDesc{
 			.image_type = VK_IMAGE_TYPE_2D,
 			.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY,

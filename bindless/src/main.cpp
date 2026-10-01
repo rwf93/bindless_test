@@ -16,6 +16,7 @@
 
 #include "camera.h"
 #include "gfx/device.h"
+#include "gfx/detail/types.h"
 #include "gfx/instance.h"
 #include "gfx/present/presentation.h"
 #include "gfx/sdl/surface.h"
@@ -380,11 +381,12 @@ int run() {
 	create_imgui(*window, instance, gpu, presentation);
 
 	auto vfs = VFS::create("../../vfs.toml");
-	auto textures = TextureRegistry::create(gpu);
-	auto pipelines = PipelineRegistry::create(gpu, vfs, presentation.format());
+	auto startup_upload = gfx::UploadBatch::create(gpu);
+	auto textures = TextureRegistry::create(startup_upload);
+	auto pipelines = PipelineRegistry::create(gpu, vfs, gfx::detail::from_vk_format(presentation.format()));
 	auto materials = MaterialRegistry::create(vfs, pipelines, textures);
 
-	auto &color = textures.create<gfx::Texture2D>(gfx::Texture2DDesc{
+	auto &color = textures.create<gfx::Texture2D>(startup_upload, gfx::Texture2DDesc{
 		.width = APP_WIDTH,
 		.height = APP_HEIGHT,
 		.format = gfx::Format::R16G16B16A16Float,
@@ -392,7 +394,7 @@ int run() {
 		.name = "gbuffer_albedo",
 	});
 
-	auto &depth = textures.create<gfx::Texture2D>(gfx::Texture2DDesc{
+	auto &depth = textures.create<gfx::Texture2D>(startup_upload, gfx::Texture2DDesc{
 		.width = APP_WIDTH,
 		.height = APP_HEIGHT,
 		.format = gfx::Format::D32Float,
@@ -400,7 +402,7 @@ int run() {
 		.name = "depth",
 	});
 
-	auto &cascaded_shadowmap = textures.create<gfx::Texture2DArray>(gfx::Texture2DArrayDesc{
+	auto &cascaded_shadowmap = textures.create<gfx::Texture2DArray>(startup_upload, gfx::Texture2DArrayDesc{
 		.width = SHADOW_MAP_RESOLUTION,
 		.height = SHADOW_MAP_RESOLUTION,
 		.layer_count = SHADOW_CASCADE_COUNT,
@@ -409,7 +411,7 @@ int run() {
 		.name = "cascaded_shadowmap",
 	});
 
-	auto &local_shadowmap = textures.create<gfx::Texture2DArray>(gfx::Texture2DArrayDesc{
+	auto &local_shadowmap = textures.create<gfx::Texture2DArray>(startup_upload, gfx::Texture2DArrayDesc{
 		.width = LOCAL_SHADOW_MAP_RESOLUTION,
 		.height = LOCAL_SHADOW_MAP_RESOLUTION,
 		.layer_count = LIGHT_COUNT * LOCAL_SHADOW_FACE_COUNT,
@@ -419,12 +421,13 @@ int run() {
 	});
 
 	auto light_probes = LightProbeSet::create(
+		startup_upload,
 		textures,
 		"scene_probes",
 		LIGHT_PROBE_CAPACITY
 	);
 
-	auto &global_probe = light_probes.add("scene_probe_global");
+	auto &global_probe = light_probes.add(startup_upload, "scene_probe_global");
 	global_probe.set_position(glm::vec3(0.0f, 4.0f, 0.0f));
 	global_probe.set_global(true);
 
@@ -438,19 +441,20 @@ int run() {
 		LIGHT_COUNT * LOCAL_SHADOW_FACE_COUNT
 	);
 
-	auto &missing_unlit = materials.load("materials/missing_unlit.toml");
-	auto &white_unlit = materials.load("materials/white_unlit.toml");
-	auto &white_pbr = materials.load("materials/white_pbr.toml");
-	auto &swapchain_write_material = materials.load("materials/swapchain_write.toml");
+	auto &missing_unlit = materials.load(startup_upload, "materials/missing_unlit.toml");
+	auto &white_unlit = materials.load(startup_upload, "materials/white_unlit.toml");
+	auto &white_pbr = materials.load(startup_upload, "materials/white_pbr.toml");
+	auto &swapchain_write_material = materials.load(startup_upload, "materials/swapchain_write.toml");
 
-	auto &skybox_space = materials.load("materials/skybox_space.toml");
-	auto &skybox_clouds = materials.load("materials/skybox_clouds.toml");
+	auto &skybox_space = materials.load(startup_upload, "materials/skybox_space.toml");
+	auto &skybox_clouds = materials.load(startup_upload, "materials/skybox_clouds.toml");
 
-	auto helmet = GLTFLoader::load_toml(vfs, materials, "generated/helmet/DamagedHelmet.model.toml");
-	auto avocado = GLTFLoader::load_toml(vfs, materials, "generated/avocado/Avocado.model.toml");
+	auto helmet = GLTFLoader::load_toml(startup_upload, vfs, materials, "generated/helmet/DamagedHelmet.model.toml");
+	auto avocado = GLTFLoader::load_toml(startup_upload, vfs, materials, "generated/avocado/Avocado.model.toml");
 	//auto sponza = GLTFLoader::load_toml(vfs, materials, "generated/sponza/Sponza.model.toml");
 	//auto flight = GLTFLoader::load_toml(vfs, materials, "generated/flight_helmet/FlightHelmet.model.toml");
 
+	auto startup_submission = startup_upload.submit();
 	auto scene_renderer = SceneRenderer::create()
 		.add(helmet, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2.0f, 0.0f)))
 	//	.add(sponza, glm::mat4(1.0f), {.two_sided = true})
@@ -581,8 +585,8 @@ int run() {
 					);
 
 					IBLPrefilterConstants constants {
-						.source_handle = current_probe->capture().handle(),
-						.output_handle = specular.storage_handle(mip),
+						.source_handle = {current_probe->capture().handle()},
+						.output_handle = {specular.storage_handle(mip)},
 						.resolution = resolution,
 						.sample_count = mip == 0 ? 1u : 64u,
 						.roughness = specular.mip_count() > 1 ? float(mip) / float(specular.mip_count() - 1) : 0.0f
@@ -613,12 +617,11 @@ int run() {
 				auto &diffuse = current_probe->diffuse();
 
 				IBLIrradianceConstants constants {
-					.source_handle = current_probe->capture().handle(),
-					.output_handle = diffuse.storage_handle(0),
+					.source_handle = {current_probe->capture().handle()},
+					.output_handle = {diffuse.storage_handle(0)},
 					.resolution = diffuse.resolution(),
 					.sample_count = 128
 				};
-
 
 				ctx.set_pipeline(pipelines.at("ibl_diffuse_convolution"));
 					ctx.set_root_data(
@@ -643,7 +646,7 @@ int run() {
 			[&](gfx::CommandList &ctx) {
 				const auto extent = light_probes.brdf_lut().image().desc.extent;
 				IBLBRDFConstants constants {
-					.output_handle = light_probes.brdf_lut().handle(),
+					.output_handle = {light_probes.brdf_lut().handle()},
 					.width = extent.width,
 					.height = extent.height,
 					.sample_count = 128
@@ -749,6 +752,7 @@ int run() {
 		)
 		.compile();
 
+	startup_submission.wait();
 	while(!quit) {
 		while(SDL_PollEvent(&event)) {
 			if(event.type == SDL_EVENT_QUIT)

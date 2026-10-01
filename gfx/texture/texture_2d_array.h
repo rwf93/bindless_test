@@ -12,6 +12,7 @@
 namespace gfx {
 
 class Device;
+class UploadBatch;
 
 struct Texture2DArrayDesc {
 	uint32_t width = 0;
@@ -34,6 +35,7 @@ class Texture2DArray {
 
 public:
 	static Texture2DArray create(Device &device, const Texture2DArrayDesc &desc);
+	static Texture2DArray create(UploadBatch &upload, const Texture2DArrayDesc &desc);
 
 	Texture2DArray(Texture2DArray &&) noexcept = default;
 	Texture2DArray &operator=(Texture2DArray &&) noexcept = default;

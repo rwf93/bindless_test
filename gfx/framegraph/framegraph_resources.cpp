@@ -177,6 +177,27 @@ FrameGraph::BufferHandle FrameGraph::resolve_buffer(
 	return {index};
 }
 
+uint32_t FrameGraph::resolve_acceleration_structure(
+	AccelerationStructureReference reference
+) {
+	if(reference.initial == VK_NULL_HANDLE) {
+		throw std::runtime_error(
+			"FrameGraph: resource wrapper returned a null acceleration structure"
+		);
+	}
+	if(auto it = m.acceleration_structure_by_identity.find(reference.identity);
+		it != m.acceleration_structure_by_identity.end())
+		return it->second;
+
+	const uint32_t index = uint32_t(m.acceleration_structures.size());
+	m.acceleration_structures.push_back({
+		.structure = reference.initial,
+		.resolve = std::move(reference.resolve),
+	});
+	m.acceleration_structure_by_identity.emplace(reference.identity, index);
+	return index;
+}
+
 void FrameGraph::resolve_resources(Pass &pass) {
 	for(auto &use : pass.images) {
 		if(use.reference) {
@@ -193,6 +214,13 @@ void FrameGraph::resolve_resources(Pass &pass) {
 			use.reference.reset();
 		} else {
 			validate(use.handle);
+		}
+	}
+
+	for(auto &use : pass.acceleration_structures) {
+		if(use.reference) {
+			use.index = resolve_acceleration_structure(std::move(*use.reference));
+			use.reference.reset();
 		}
 	}
 
@@ -252,6 +280,17 @@ void FrameGraph::refresh_external_resources() {
 		resource.buffer = buffer;
 		if(changed || resource.reset_each_frame)
 			resource.state = resource.initial_state;
+	}
+
+	for(auto &resource : m.acceleration_structures) {
+		const auto structure = resource.resolve();
+		if(structure == VK_NULL_HANDLE) {
+			throw std::runtime_error(
+				"FrameGraph: acceleration structure provider returned a null handle"
+			);
+		}
+		resource.read = false;
+		resource.structure = structure;
 	}
 }
 

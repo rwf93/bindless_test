@@ -25,7 +25,17 @@
             "cwd": "${workspaceFolder}/bin/windows_x64",
             "environment": [],
             "console": "integratedTerminal"
+        },
+        {
+            "name": "(Windows) RT",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/bin/windows_x64/gfx_raytracing_example.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/bin/windows_x64",
+            "environment": [],
+            "console": "integratedTerminal"
         }
-
     ]
 }

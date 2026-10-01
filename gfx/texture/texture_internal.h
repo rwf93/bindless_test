@@ -10,18 +10,19 @@
 
 namespace gfx {
 class Device;
+class UploadBatch;
 namespace texture_detail {
 
 VkImageLayout initial_layout_for(VkFormat format);
 
 Image create_image(
-	Device &device,
+	UploadBatch &upload,
 	ImageDesc desc,
 	VkImageLayout initial_layout
 );
 
 void upload_image(
-	Device &device,
+	UploadBatch &upload,
 	const ImageRef &image,
 	VkExtent3D extent,
 	VkFormat format,

@@ -35,13 +35,13 @@ private:
 
 	public:
 		static Mesh create(
-			gfx::Device &device,
+			gfx::UploadBatch &upload,
 			std::span<const Vertex> vertices,
 			std::span<const uint32_t> indices
 		) {
 			return Mesh(M{
-				.vbo = gfx::Buffer<Vertex>::create(device, vertices),
-				.ibo = gfx::Buffer<uint32_t>::create(device, indices),
+				.vbo = gfx::Buffer<Vertex>::create(upload, vertices),
+				.ibo = gfx::Buffer<uint32_t>::create(upload, indices),
 			});
 		}
 
@@ -110,7 +110,19 @@ public:
 	static Model create(
 		gfx::Device &device,
 		ModelData data,
-		MaterialBindings materials = {},
+		MaterialBindings materials = MaterialBindings{
+			.slots = {},
+			.default_material = nullptr,
+		},
+		glm::mat4 model_transform = glm::mat4(1.0f)
+	);
+	static Model create(
+		gfx::UploadBatch &upload,
+		ModelData data,
+		MaterialBindings materials = MaterialBindings{
+			.slots = {},
+			.default_material = nullptr,
+		},
 		glm::mat4 model_transform = glm::mat4(1.0f)
 	);
 

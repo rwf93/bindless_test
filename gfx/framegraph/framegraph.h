@@ -34,6 +34,11 @@ concept FrameGraphBufferResource = requires(const T &resource) {
 	{ resource.size_bytes() } -> std::convertible_to<VkDeviceSize>;
 };
 
+template<typename T>
+concept FrameGraphAccelerationStructureResource = requires(const T &resource) {
+	{ resource.native() } -> std::same_as<VkAccelerationStructureKHR>;
+};
+
 class FrameGraph {
 	struct Pass;
 	static constexpr uint32_t invalid_resource = std::numeric_limits<uint32_t>::max();
@@ -144,6 +149,11 @@ public:
 			bool reset_each_frame,
 			BufferAccess access
 		);
+		PassBuilder &use_acceleration_structure(
+			uint64_t identity,
+			VkAccelerationStructureKHR initial,
+			std::function<VkAccelerationStructureKHR()> resolve
+		);
 
 		template<typename ResourceT>
 		static std::string resource_name(const ResourceT &resource) {
@@ -225,6 +235,16 @@ public:
 		PassBuilder &read_write(const BufferT &buffer) {
 			return use(buffer, BufferAccess::StorageReadWrite);
 		}
+
+		template<FrameGraphAccelerationStructureResource StructureT>
+		PassBuilder &read(const StructureT &structure) {
+			const auto *resource = std::addressof(structure);
+			return use_acceleration_structure(
+				resource_identity(structure),
+				structure.native(),
+				[resource] { return resource->native(); }
+			);
+		}
 	};
 
 	class RenderPassBuilder final : public PassBuilder {
@@ -279,17 +299,33 @@ public:
 			return RenderPassBuilder(M{.pass = std::addressof(pass)});
 		}
 
-		RenderPassBuilder &color(const ExternalImage &image, AttachmentOps ops = {});
+		RenderPassBuilder &color(const ExternalImage &image, AttachmentOps ops = AttachmentOps{
+			.load_op = VK_ATTACHMENT_LOAD_OP_LOAD,
+			.store_op = VK_ATTACHMENT_STORE_OP_STORE,
+			.clear_value = {},
+		});
 
 		template<FrameGraphImageResource ImageT>
-		RenderPassBuilder &color(const ImageT &image, AttachmentOps ops = {}) {
+		RenderPassBuilder &color(const ImageT &image, AttachmentOps ops = AttachmentOps{
+			.load_op = VK_ATTACHMENT_LOAD_OP_LOAD,
+			.store_op = VK_ATTACHMENT_STORE_OP_STORE,
+			.clear_value = {},
+		}) {
 			return resource_attachment(image, ops, false);
 		}
 
-		RenderPassBuilder &depth(const ExternalImage &image, AttachmentOps ops = {});
+		RenderPassBuilder &depth(const ExternalImage &image, AttachmentOps ops = AttachmentOps{
+			.load_op = VK_ATTACHMENT_LOAD_OP_LOAD,
+			.store_op = VK_ATTACHMENT_STORE_OP_STORE,
+			.clear_value = {},
+		});
 
 		template<FrameGraphImageResource ImageT>
-		RenderPassBuilder &depth(const ImageT &image, AttachmentOps ops = {}) {
+		RenderPassBuilder &depth(const ImageT &image, AttachmentOps ops = AttachmentOps{
+			.load_op = VK_ATTACHMENT_LOAD_OP_LOAD,
+			.store_op = VK_ATTACHMENT_STORE_OP_STORE,
+			.clear_value = {},
+		}) {
 			return resource_attachment(image, ops, true);
 		}
 
@@ -348,13 +384,26 @@ public:
 		}
 	};
 
+	class RayTracingPassBuilder final : public PassBuilder {
+		friend class FrameGraph;
+		explicit RayTracingPassBuilder(M m) : PassBuilder(std::move(m)) {}
+
+	public:
+		static RayTracingPassBuilder create(Pass &pass) {
+			return RayTracingPassBuilder(M{.pass = std::addressof(pass)});
+		}
+	};
+
 	using RenderSetupFn = std::function<void(RenderPassBuilder &)>;
 	using ComputeSetupFn = std::function<void(ComputePassBuilder &)>;
+	using RayTracingSetupFn = std::function<void(RayTracingPassBuilder &)>;
 
 	FrameGraph &add_render_pass(const std::string &name, RenderSetupFn setup, ExecuteFn execute) &;
 	FrameGraph &&add_render_pass(const std::string &name, RenderSetupFn setup, ExecuteFn execute) &&;
 	FrameGraph &add_compute_pass(const std::string &name, ComputeSetupFn setup, ExecuteFn execute) &;
 	FrameGraph &&add_compute_pass(const std::string &name, ComputeSetupFn setup, ExecuteFn execute) &&;
+	FrameGraph &add_ray_tracing_pass(const std::string &name, RayTracingSetupFn setup, ExecuteFn execute) &;
+	FrameGraph &&add_ray_tracing_pass(const std::string &name, RayTracingSetupFn setup, ExecuteFn execute) &&;
 
 	FrameGraph &compile() &;
 	FrameGraph &&compile() &&;
@@ -370,7 +419,7 @@ public:
 	}
 
 private:
-	enum class PassKind { Render, Compute };
+	enum class PassKind { Render, Compute, RayTracing };
 
 	struct ImageState {
 		VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -400,6 +449,12 @@ private:
 		bool reset_each_frame = false;
 	};
 
+	struct AccelerationStructureReference {
+		uint64_t identity = 0;
+		VkAccelerationStructureKHR initial = VK_NULL_HANDLE;
+		std::function<VkAccelerationStructureKHR()> resolve;
+	};
+
 	struct ImageResource {
 		std::string name;
 		ImageRef image;
@@ -420,6 +475,12 @@ private:
 		bool reset_each_frame = false;
 	};
 
+	struct AccelerationStructureResource {
+		VkAccelerationStructureKHR structure = VK_NULL_HANDLE;
+		std::function<VkAccelerationStructureKHR()> resolve;
+		bool read = false;
+	};
+
 	struct ImageUse {
 		ImageHandle handle;
 		ImageAccess access;
@@ -430,6 +491,11 @@ private:
 		BufferHandle handle;
 		BufferAccess access;
 		std::optional<BufferReference> reference;
+	};
+
+	struct AccelerationStructureUse {
+		uint32_t index = invalid_resource;
+		std::optional<AccelerationStructureReference> reference;
 	};
 
 	struct Attachment {
@@ -446,6 +512,7 @@ private:
 		PassConditionFn condition;
 		std::vector<ImageUse> images;
 		std::vector<BufferUse> buffers;
+		std::vector<AccelerationStructureUse> acceleration_structures;
 		std::vector<Attachment> attachments;
 	};
 
@@ -468,6 +535,8 @@ private:
 	struct CompiledPass {
 		std::vector<CompiledImageBarrier> image_barriers;
 		std::vector<CompiledBufferBarrier> buffer_barriers;
+		std::vector<uint32_t> acceleration_structure_reads;
+		VkPipelineStageFlags2 shader_stage = VK_PIPELINE_STAGE_2_NONE;
 		bool has_rendering = false;
 		VkExtent2D render_extent = {0, 0};
 		uint32_t render_layer_count = 1;
@@ -480,10 +549,12 @@ private:
 		std::vector<Pass> passes;
 		std::vector<ImageResource> images;
 		std::vector<BufferResource> buffers;
+		std::vector<AccelerationStructureResource> acceleration_structures;
 		std::unordered_map<std::string, uint32_t> image_by_name;
 		std::unordered_map<std::string, uint32_t> buffer_by_name;
 		std::unordered_map<uint64_t, uint32_t> image_by_identity;
 		std::unordered_map<uint64_t, uint32_t> buffer_by_identity;
+		std::unordered_map<uint64_t, uint32_t> acceleration_structure_by_identity;
 		std::vector<CompiledPass> compiled_passes;
 		bool compiled = false;
 	} m;
@@ -495,6 +566,7 @@ private:
 	void validate(BufferHandle handle) const;
 	ImageHandle resolve_image(ImageReference reference, bool attachment);
 	BufferHandle resolve_buffer(BufferReference reference);
+	uint32_t resolve_acceleration_structure(AccelerationStructureReference reference);
 	void resolve_resources(Pass &pass);
 	void refresh_external_resources();
 };

@@ -7,10 +7,19 @@
 #include "gfx/device.h"
 #include "gfx/detail/types.h"
 #include "gfx/texture/texture_internal.h"
+#include "gfx/upload_batch.h"
 
 namespace gfx {
 
 TextureCube TextureCube::create(Device &device, const TextureCubeDesc &desc) {
+	auto upload = UploadBatch::create(device);
+	auto result = create(upload, desc);
+	upload.submit().wait();
+	return result;
+}
+
+TextureCube TextureCube::create(UploadBatch &upload, const TextureCubeDesc &desc) {
+	Device &device = upload.device();
 	if(desc.resolution == 0 || desc.mip_count == 0)
 		throw std::invalid_argument("TextureCube::create: invalid dimensions");
 
@@ -25,7 +34,7 @@ TextureCube TextureCube::create(Device &device, const TextureCubeDesc &desc) {
 		VK_IMAGE_USAGE_SAMPLED_BIT |
 		VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	auto image = texture_detail::create_image(
-		device,
+		upload,
 		ImageDesc{
 			.image_type = VK_IMAGE_TYPE_2D,
 			.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
@@ -42,7 +51,7 @@ TextureCube TextureCube::create(Device &device, const TextureCubeDesc &desc) {
 
 	// Initialize every face and mip so a probe can safely use LOAD while its
 	// expensive capture callback is skipped on clean frames.
-	device.submit_and_wait([&](CommandList &commands) {
+	upload.record([&](CommandList &commands) {
 		VkClearColorValue clear = {};
 		device.dispatch().cmdClearColorImage(
 			commands.native(),
@@ -53,6 +62,10 @@ TextureCube TextureCube::create(Device &device, const TextureCubeDesc &desc) {
 			&sampled_view.subresources
 		);
 	});
+	upload.barrier(
+		VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+		VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT
+	);
 
 	ImageRef attachment;
 	if(has_usage(desc.usage, TextureUsage::ColorAttachment)) {

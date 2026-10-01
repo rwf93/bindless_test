@@ -12,10 +12,23 @@
 
 #include <glm/gtc/packing.hpp>
 
+#include "gfx/upload_batch.h"
+
 namespace gfx {
 
 Texture2D STBTextureLoader::load(
 	Device &device,
+	const std::filesystem::path &path,
+	TextureColorSpace color_space
+) {
+	auto upload = UploadBatch::create(device);
+	auto result = load(upload, path, color_space);
+	upload.submit().wait();
+	return result;
+}
+
+Texture2D STBTextureLoader::load(
+	UploadBatch &upload,
 	const std::filesystem::path &path,
 	TextureColorSpace color_space
 ) {
@@ -58,7 +71,7 @@ Texture2D STBTextureLoader::load(
 			half_pixels[index] = glm::packHalf1x16(pixels.get()[index]);
 
 		return Texture2D::create(
-			device,
+			upload,
 			Texture2DDesc{
 				.width = uint32_t(width),
 				.height = uint32_t(height),
@@ -96,7 +109,7 @@ Texture2D STBTextureLoader::load(
 		size_t(width) * height * 4
 	);
 	return Texture2D::create(
-		device,
+		upload,
 		Texture2DDesc{
 			.width = uint32_t(width),
 			.height = uint32_t(height),

@@ -45,6 +45,8 @@ void FrameGraph::execute(gfx::CommandList &commands) {
 
 		std::vector<VkImageMemoryBarrier2> image_barriers;
 		std::vector<VkBufferMemoryBarrier2> buffer_barriers;
+		VkMemoryBarrier2 acceleration_structure_barrier{};
+		bool needs_acceleration_structure_barrier = false;
 		image_barriers.reserve(compiled.image_barriers.size());
 		buffer_barriers.reserve(compiled.buffer_barriers.size());
 
@@ -109,9 +111,28 @@ void FrameGraph::execute(gfx::CommandList &commands) {
 			resource.state = barrier.target;
 		}
 
-		if(!image_barriers.empty() || !buffer_barriers.empty()) {
+		for(const auto index : compiled.acceleration_structure_reads) {
+			auto &resource = m.acceleration_structures[index];
+			if(!resource.read) {
+				needs_acceleration_structure_barrier = true;
+				acceleration_structure_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+				acceleration_structure_barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+				acceleration_structure_barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+				acceleration_structure_barrier.dstStageMask |= compiled.shader_stage;
+				acceleration_structure_barrier.dstAccessMask =
+					VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+			}
+			resource.read = true;
+		}
+
+		if(!image_barriers.empty() || !buffer_barriers.empty() ||
+			needs_acceleration_structure_barrier) {
 			VkDependencyInfo dependency = {};
 			dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+			dependency.memoryBarrierCount =
+				needs_acceleration_structure_barrier ? 1 : 0;
+			dependency.pMemoryBarriers =
+				dependency.memoryBarrierCount ? &acceleration_structure_barrier : nullptr;
 			dependency.imageMemoryBarrierCount =
 				uint32_t(image_barriers.size());
 			dependency.pImageMemoryBarriers = image_barriers.data();
@@ -146,12 +167,15 @@ void FrameGraph::execute(gfx::CommandList &commands) {
 			dispatch.cmdBeginRendering(cmd, &rendering);
 		}
 
+		const VkPipelineBindPoint bind_point = pass.kind == PassKind::Compute
+			? VK_PIPELINE_BIND_POINT_COMPUTE
+			: pass.kind == PassKind::RayTracing
+				? VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR
+				: VK_PIPELINE_BIND_POINT_GRAPHICS;
 		auto pass_commands = CommandList::create(
 			*m.device,
 			cmd,
-			pass.kind == PassKind::Compute
-				? VK_PIPELINE_BIND_POINT_COMPUTE
-				: VK_PIPELINE_BIND_POINT_GRAPHICS
+			bind_point
 		);
 		pass.execute(pass_commands);
 

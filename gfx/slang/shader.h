@@ -1,6 +1,5 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
 #include <slang.h>
 #include <slang-com-ptr.h>
 #include <functional>
@@ -10,6 +9,7 @@
 
 #include "gfx/device.h"
 #include "gfx/pipeline.h"
+#include "gfx/types.h"
 
 namespace gfx {
 
@@ -43,12 +43,12 @@ public:
 };
 
 struct GraphicsPipelineDesc {
-	std::vector<VkFormat> color_attachments;
-	VkFormat depth_format = VK_FORMAT_UNDEFINED;
-	VkCullModeFlagBits cull_mode = VK_CULL_MODE_NONE;
+	std::vector<Format> color_attachments;
+	Format depth_format = Format::Undefined;
+	CullMode cull_mode = CullMode::None;
 	bool depth_test = true;
 	bool depth_write = true;
-	VkCompareOp depth_compare = VK_COMPARE_OP_LESS;
+	CompareOp depth_compare = CompareOp::Less;
 };
 
 } // namespace gfx

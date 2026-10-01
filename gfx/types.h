@@ -19,6 +19,24 @@ enum class Format : uint16_t {
 	D24UnormS8Uint,
 };
 
+enum class CullMode : uint8_t {
+	None,
+	Front,
+	Back,
+	FrontAndBack,
+};
+
+enum class CompareOp : uint8_t {
+	Never,
+	Less,
+	Equal,
+	LessOrEqual,
+	Greater,
+	NotEqual,
+	GreaterOrEqual,
+	Always,
+};
+
 enum class TextureUsage : uint32_t {
 	None = 0,
 	Sampled = 1u << 0,

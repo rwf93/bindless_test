@@ -1,6 +1,6 @@
 target("material-generator")
     set_kind("binary")
-    set_languages("cxx23")
+    set_languages("cxx26")
 
     add_files("src/*.cpp")
     add_packages(

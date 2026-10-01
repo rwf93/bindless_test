@@ -57,7 +57,8 @@ std::filesystem::path MaterialRegistry::resolve(
 }
 
 Material MaterialRegistry::create_from_toml(
-	const std::filesystem::path &resolved
+	const std::filesystem::path &resolved,
+	gfx::UploadBatch *upload
 ) {
 	auto result = toml::parseFile(resolved.string());
 	if(!result.table) {
@@ -103,10 +104,9 @@ Material MaterialRegistry::create_from_toml(
 			if(!std::filesystem::exists(texture_path))
 				texture_path = directory / texture_reference;
 
-			gfx::Texture2D &loaded = m.textures->load<gfx::Texture2D>(
-				texture_path,
-				color_space
-			);
+			gfx::Texture2D &loaded = upload
+				? m.textures->load<gfx::Texture2D>(*upload, texture_path, color_space)
+				: m.textures->load<gfx::Texture2D>(texture_path, color_space);
 			parameters.push_back(MaterialParam::tex(key.c_str(), loaded.handle()));
 			spdlog::debug(
 				"\t{}.{} = '{}' ({}) -> handle {}",
@@ -205,7 +205,9 @@ Material MaterialRegistry::create_from_toml(
 		resolved.string(),
 		pipeline_name
 	);
-	return Material::create(*pipeline, *layout, parameters);
+	return upload
+		? Material::create(*upload, *pipeline, *layout, parameters)
+		: Material::create(*pipeline, *layout, parameters);
 }
 
 Material &MaterialRegistry::load(const std::filesystem::path &path) {
@@ -215,6 +217,20 @@ Material &MaterialRegistry::load(const std::filesystem::path &path) {
 		key,
 		with_result_of([&] {
 			return create_from_toml(resolved);
+		})
+	).first->second;
+}
+
+Material &MaterialRegistry::load(
+	gfx::UploadBatch &upload,
+	const std::filesystem::path &path
+) {
+	const std::filesystem::path resolved = resolve(path);
+	const std::string key = material_key(resolved);
+	return m.materials.try_emplace(
+		key,
+		with_result_of([&] {
+			return create_from_toml(resolved, &upload);
 		})
 	).first->second;
 }

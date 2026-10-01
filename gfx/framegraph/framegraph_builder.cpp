@@ -96,6 +96,22 @@ FrameGraph::PassBuilder &FrameGraph::PassBuilder::use_buffer(
 	return *this;
 }
 
+FrameGraph::PassBuilder &FrameGraph::PassBuilder::use_acceleration_structure(
+	uint64_t identity,
+	VkAccelerationStructureKHR initial,
+	std::function<VkAccelerationStructureKHR()> resolve
+) {
+	pass().acceleration_structures.push_back({
+		.index = invalid_resource,
+		.reference = AccelerationStructureReference{
+			.identity = identity,
+			.initial = initial,
+			.resolve = std::move(resolve),
+		},
+	});
+	return *this;
+}
+
 FrameGraph::RenderPassBuilder &FrameGraph::RenderPassBuilder::attachment(
 	ImageId identity,
 	std::string name,
@@ -211,6 +227,36 @@ FrameGraph &&FrameGraph::add_compute_pass(
 	ExecuteFn execute
 ) && {
 	static_cast<FrameGraph &>(*this).add_compute_pass(
+		name,
+		std::move(setup),
+		std::move(execute)
+	);
+	return std::move(*this);
+}
+
+FrameGraph &FrameGraph::add_ray_tracing_pass(
+	const std::string &name,
+	RayTracingSetupFn setup,
+	ExecuteFn execute
+) & {
+	m.passes.push_back({
+		.name = name,
+		.kind = PassKind::RayTracing,
+		.execute = std::move(execute),
+	});
+	auto builder = RayTracingPassBuilder::create(m.passes.back());
+	setup(builder);
+	resolve_resources(m.passes.back());
+	m.compiled = false;
+	return *this;
+}
+
+FrameGraph &&FrameGraph::add_ray_tracing_pass(
+	const std::string &name,
+	RayTracingSetupFn setup,
+	ExecuteFn execute
+) && {
+	static_cast<FrameGraph &>(*this).add_ray_tracing_pass(
 		name,
 		std::move(setup),
 		std::move(execute)

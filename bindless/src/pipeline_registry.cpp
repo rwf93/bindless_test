@@ -11,13 +11,14 @@
 #include <tomlcpp.hpp>
 
 #include "gfx/create_utils.h"
+#include "gfx/detail/types.h"
 #include "vfs.h"
 
 namespace {
 
-VkFormat parse_format(const std::string &name, VkFormat swapchain_format) {
+gfx::Format parse_format(const std::string &name, gfx::Format swapchain_format) {
 	if(name == "SWAPCHAIN") {
-		if(swapchain_format == VK_FORMAT_UNDEFINED) {
+		if(swapchain_format == gfx::Format::Undefined) {
 			throw std::runtime_error(
 				"pipeline requests SWAPCHAIN format without a presentation format"
 			);
@@ -25,17 +26,18 @@ VkFormat parse_format(const std::string &name, VkFormat swapchain_format) {
 		return swapchain_format;
 	}
 
-	static const std::unordered_map<std::string, VkFormat> formats = {
-		{"R8G8B8A8_UNORM", VK_FORMAT_R8G8B8A8_UNORM},
-		{"R8G8B8A8_SRGB", VK_FORMAT_R8G8B8A8_SRGB},
-		{"B8G8R8A8_UNORM", VK_FORMAT_B8G8R8A8_UNORM},
-		{"B8G8R8A8_SRGB", VK_FORMAT_B8G8R8A8_SRGB},
-		{"R16G16B16A16_UNORM", VK_FORMAT_R16G16B16A16_UNORM},
-		{"R16G16B16A16_SFLOAT", VK_FORMAT_R16G16B16A16_SFLOAT},
-		{"R32G32B32A32_SFLOAT", VK_FORMAT_R32G32B32A32_SFLOAT},
-		{"D16_UNORM", VK_FORMAT_D16_UNORM},
-		{"D32_SFLOAT", VK_FORMAT_D32_SFLOAT},
-		{"D24_UNORM_S8_UINT", VK_FORMAT_D24_UNORM_S8_UINT},
+	static const std::unordered_map<std::string, gfx::Format> formats = {
+		{"R8_UNORM", gfx::Format::R8Unorm},
+		{"R8G8B8A8_UNORM", gfx::Format::R8G8B8A8Unorm},
+		{"R8G8B8A8_SRGB", gfx::Format::R8G8B8A8Srgb},
+		{"B8G8R8A8_UNORM", gfx::Format::B8G8R8A8Unorm},
+		{"B8G8R8A8_SRGB", gfx::Format::B8G8R8A8Srgb},
+		{"R16G16B16A16_UNORM", gfx::Format::R16G16B16A16Unorm},
+		{"R16G16B16A16_SFLOAT", gfx::Format::R16G16B16A16Float},
+		{"R32G32B32A32_SFLOAT", gfx::Format::R32G32B32A32Float},
+		{"D16_UNORM", gfx::Format::D16Unorm},
+		{"D32_SFLOAT", gfx::Format::D32Float},
+		{"D24_UNORM_S8_UINT", gfx::Format::D24UnormS8Uint},
 	};
 
 	auto it = formats.find(name);
@@ -44,24 +46,24 @@ VkFormat parse_format(const std::string &name, VkFormat swapchain_format) {
 	return it->second;
 }
 
-VkCullModeFlagBits parse_cull(const std::string &name) {
-	if(name == "none") return VK_CULL_MODE_NONE;
-	if(name == "front") return VK_CULL_MODE_FRONT_BIT;
-	if(name == "back") return VK_CULL_MODE_BACK_BIT;
-	if(name == "both") return VK_CULL_MODE_FRONT_AND_BACK;
+gfx::CullMode parse_cull(const std::string &name) {
+	if(name == "none") return gfx::CullMode::None;
+	if(name == "front") return gfx::CullMode::Front;
+	if(name == "back") return gfx::CullMode::Back;
+	if(name == "both") return gfx::CullMode::FrontAndBack;
 	throw std::runtime_error("unknown pipeline cull mode '" + name + "'");
 }
 
-VkCompareOp parse_depth_compare(const std::string &name) {
-	static const std::unordered_map<std::string, VkCompareOp> comparisons = {
-		{"never", VK_COMPARE_OP_NEVER},
-		{"less", VK_COMPARE_OP_LESS},
-		{"equal", VK_COMPARE_OP_EQUAL},
-		{"less_or_equal", VK_COMPARE_OP_LESS_OR_EQUAL},
-		{"greater", VK_COMPARE_OP_GREATER},
-		{"not_equal", VK_COMPARE_OP_NOT_EQUAL},
-		{"greater_or_equal", VK_COMPARE_OP_GREATER_OR_EQUAL},
-		{"always", VK_COMPARE_OP_ALWAYS},
+gfx::CompareOp parse_depth_compare(const std::string &name) {
+	static const std::unordered_map<std::string, gfx::CompareOp> comparisons = {
+		{"never", gfx::CompareOp::Never},
+		{"less", gfx::CompareOp::Less},
+		{"equal", gfx::CompareOp::Equal},
+		{"less_or_equal", gfx::CompareOp::LessOrEqual},
+		{"greater", gfx::CompareOp::Greater},
+		{"not_equal", gfx::CompareOp::NotEqual},
+		{"greater_or_equal", gfx::CompareOp::GreaterOrEqual},
+		{"always", gfx::CompareOp::Always},
 	};
 
 	auto it = comparisons.find(name);
@@ -74,7 +76,7 @@ VkCompareOp parse_depth_compare(const std::string &name) {
 
 void PipelineRegistry::load_pipeline(
 	gfx::Device &device,
-	VkFormat swapchain_format,
+	gfx::Format swapchain_format,
 	VFS &vfs,
 	const std::filesystem::path &path,
 	PipelineMap &pipelines
@@ -116,7 +118,7 @@ void PipelineRegistry::load_pipeline(
 	if(has_type && pipeline_type != "graphics")
 		throw std::runtime_error("pipeline '" + name + "' has unknown type '" + pipeline_type + "'");
 
-	std::vector<VkFormat> attachments;
+	std::vector<gfx::Format> attachments;
 	if(auto array = root.getArray("attachments")) {
 		if(auto strings = array->getStringVector()) {
 			attachments.reserve(strings->size());
@@ -125,11 +127,11 @@ void PipelineRegistry::load_pipeline(
 		}
 	}
 
-	VkFormat depth_format = VK_FORMAT_UNDEFINED;
+	gfx::Format depth_format = gfx::Format::Undefined;
 	if(auto [has_depth, depth] = root.getString("depth"); has_depth)
 		depth_format = parse_format(depth, swapchain_format);
 
-	VkCullModeFlagBits cull = VK_CULL_MODE_NONE;
+	gfx::CullMode cull = gfx::CullMode::None;
 	if(auto [has_cull, value] = root.getString("cull"); has_cull)
 		cull = parse_cull(value);
 
@@ -140,7 +142,7 @@ void PipelineRegistry::load_pipeline(
 	if(auto [found, value] = root.getBool("depth_write"); found)
 		depth_write = value;
 
-	VkCompareOp depth_compare = VK_COMPARE_OP_LESS;
+	gfx::CompareOp depth_compare = gfx::CompareOp::Less;
 	if(auto [found, value] = root.getString("depth_compare"); found)
 		depth_compare = parse_depth_compare(value);
 
@@ -175,7 +177,7 @@ void PipelineRegistry::load_pipeline(
 
 PipelineRegistry::PipelineMap PipelineRegistry::load_all(
 	gfx::Device &device,
-	VkFormat swapchain_format,
+	gfx::Format swapchain_format,
 	VFS &vfs
 ) {
 	PipelineMap pipelines;
@@ -210,7 +212,7 @@ PipelineRegistry::PipelineMap PipelineRegistry::load_all(
 PipelineRegistry PipelineRegistry::create(
 	gfx::Device &device,
 	VFS &vfs,
-	VkFormat swapchain_format
+	gfx::Format swapchain_format
 ) {
 	return PipelineRegistry(M{
 		.device = &device,

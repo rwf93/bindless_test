@@ -10,7 +10,7 @@
 class PipelineRegistry;
 class TextureRegistry;
 class VFS;
-namespace gfx { class Device; }
+namespace gfx { class Device; class UploadBatch; }
 
 class MaterialRegistry {
 	struct M {
@@ -23,7 +23,7 @@ class MaterialRegistry {
 	explicit MaterialRegistry(M m) : m(std::move(m)) {}
 
 	std::filesystem::path resolve(const std::filesystem::path &path) const;
-	Material create_from_toml(const std::filesystem::path &path);
+	Material create_from_toml(const std::filesystem::path &path, gfx::UploadBatch *upload = nullptr);
 
 public:
 	MaterialRegistry(MaterialRegistry &&) noexcept = default;
@@ -39,6 +39,7 @@ public:
 	gfx::Device &device() const;
 
 	Material &load(const std::filesystem::path &path);
+	Material &load(gfx::UploadBatch &upload, const std::filesystem::path &path);
 
 	// Replaces values inside existing map nodes, keeping every Material pointer
 	// already held by a Model stable. A failed reload retains its old material.

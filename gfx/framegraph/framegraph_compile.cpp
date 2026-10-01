@@ -18,40 +18,34 @@ struct BufferAccessState {
 	VkAccessFlags2 access;
 };
 
-VkPipelineStageFlags2 shader_stage(bool compute) {
-	return compute
-		? VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT
-		: VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
-}
-
 ImageAccessState access_state(
 	FrameGraph::ImageAccess access,
-	bool compute
+	VkPipelineStageFlags2 shader_stage
 ) {
 	using Access = FrameGraph::ImageAccess;
 	switch(access) {
 	case Access::SampledRead:
 		return {
 			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-			shader_stage(compute),
+			shader_stage,
 			VK_ACCESS_2_SHADER_READ_BIT,
 		};
 	case Access::StorageRead:
 		return {
 			VK_IMAGE_LAYOUT_GENERAL,
-			shader_stage(compute),
+			shader_stage,
 			VK_ACCESS_2_SHADER_READ_BIT,
 		};
 	case Access::StorageWrite:
 		return {
 			VK_IMAGE_LAYOUT_GENERAL,
-			shader_stage(compute),
+			shader_stage,
 			VK_ACCESS_2_SHADER_WRITE_BIT,
 		};
 	case Access::StorageReadWrite:
 		return {
 			VK_IMAGE_LAYOUT_GENERAL,
-			shader_stage(compute),
+			shader_stage,
 			VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
 		};
 	case Access::TransferRead:
@@ -72,21 +66,21 @@ ImageAccessState access_state(
 
 BufferAccessState access_state(
 	FrameGraph::BufferAccess access,
-	bool compute
+	VkPipelineStageFlags2 shader_stage
 ) {
 	using Access = FrameGraph::BufferAccess;
 	switch(access) {
 	case Access::StorageRead:
-		return {shader_stage(compute), VK_ACCESS_2_SHADER_READ_BIT};
+		return {shader_stage, VK_ACCESS_2_SHADER_READ_BIT};
 	case Access::StorageWrite:
-		return {shader_stage(compute), VK_ACCESS_2_SHADER_WRITE_BIT};
+		return {shader_stage, VK_ACCESS_2_SHADER_WRITE_BIT};
 	case Access::StorageReadWrite:
 		return {
-			shader_stage(compute),
+			shader_stage,
 			VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
 		};
 	case Access::UniformRead:
-		return {shader_stage(compute), VK_ACCESS_2_UNIFORM_READ_BIT};
+		return {shader_stage, VK_ACCESS_2_UNIFORM_READ_BIT};
 	case Access::IndirectRead:
 		return {
 			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
@@ -124,7 +118,11 @@ FrameGraph &FrameGraph::compile() & {
 
 	for(const auto &pass : m.passes) {
 		CompiledPass compiled;
-		const bool compute = pass.kind == PassKind::Compute;
+		compiled.shader_stage = pass.kind == PassKind::Compute
+			? VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT
+			: pass.kind == PassKind::RayTracing
+				? VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR
+				: VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
 		std::unordered_set<uint32_t> used_images;
 		std::unordered_set<uint32_t> used_buffers;
 
@@ -136,7 +134,7 @@ FrameGraph &FrameGraph::compile() & {
 					"' is declared more than once in pass '" + pass.name + "'"
 				);
 			}
-			const auto state = access_state(use.access, compute);
+			const auto state = access_state(use.access, compiled.shader_stage);
 			compiled.image_barriers.push_back({
 				use.handle.index,
 				{state.layout, state.stage, state.access},
@@ -151,11 +149,24 @@ FrameGraph &FrameGraph::compile() & {
 					"' is declared more than once in pass '" + pass.name + "'"
 				);
 			}
-			const auto state = access_state(use.access, compute);
+			const auto state = access_state(use.access, compiled.shader_stage);
 			compiled.buffer_barriers.push_back({
 				use.handle.index,
 				{state.stage, state.access},
 			});
+		}
+
+		std::unordered_set<uint32_t> used_acceleration_structures;
+		for(const auto &use : pass.acceleration_structures) {
+			if(use.index >= m.acceleration_structures.size())
+				throw std::runtime_error("FrameGraph: invalid acceleration structure");
+			if(!used_acceleration_structures.insert(use.index).second) {
+				throw std::runtime_error(
+					"FrameGraph: acceleration structure is declared more than once in pass '" +
+					pass.name + "'"
+				);
+			}
+			compiled.acceleration_structure_reads.push_back(use.index);
 		}
 
 		if(pass.kind == PassKind::Render) {
@@ -255,7 +266,7 @@ FrameGraph &FrameGraph::compile() & {
 			}
 		} else if(!pass.attachments.empty()) {
 			throw std::runtime_error(
-				"FrameGraph: compute pass '" + pass.name +
+				"FrameGraph: non-render pass '" + pass.name +
 				"' cannot have raster attachments"
 			);
 		}

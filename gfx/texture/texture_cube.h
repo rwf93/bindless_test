@@ -13,6 +13,7 @@
 namespace gfx {
 
 class Device;
+class UploadBatch;
 
 struct TextureCubeDesc {
 	uint32_t resolution = 0;
@@ -39,6 +40,7 @@ class TextureCube {
 
 public:
 	static TextureCube create(Device &device, const TextureCubeDesc &desc);
+	static TextureCube create(UploadBatch &upload, const TextureCubeDesc &desc);
 
 	TextureCube(TextureCube &&) noexcept = default;
 	TextureCube &operator=(TextureCube &&) noexcept = default;

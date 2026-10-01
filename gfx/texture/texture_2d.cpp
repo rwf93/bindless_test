@@ -7,6 +7,7 @@
 #include "gfx/device.h"
 #include "gfx/detail/types.h"
 #include "gfx/texture/texture_internal.h"
+#include "gfx/upload_batch.h"
 
 namespace gfx {
 namespace {
@@ -34,12 +35,23 @@ Texture2D Texture2D::generate(
 	const Texture2DDesc &desc,
 	const std::function<uint32_t(int x, int y)> &function
 ) {
+	auto upload = UploadBatch::create(device);
+	auto result = generate(upload, desc, function);
+	upload.submit().wait();
+	return result;
+}
+
+Texture2D Texture2D::generate(
+	UploadBatch &upload,
+	const Texture2DDesc &desc,
+	const std::function<uint32_t(int x, int y)> &function
+) {
 	std::vector<uint32_t> data(size_t(desc.width) * desc.height);
 	for(uint32_t y = 0; y < desc.height; y++) {
 		for(uint32_t x = 0; x < desc.width; x++)
 			data[size_t(y) * desc.width + x] = function(int(x), int(y));
 	}
-	return create(device, desc, std::as_bytes(std::span(data)));
+	return create(upload, desc, std::as_bytes(std::span(data)));
 }
 
 Texture2D Texture2D::create(
@@ -47,6 +59,18 @@ Texture2D Texture2D::create(
 	const Texture2DDesc &desc,
 	std::span<const std::byte> data
 ) {
+	auto upload = UploadBatch::create(device);
+	auto result = create(upload, desc, data);
+	upload.submit().wait();
+	return result;
+}
+
+Texture2D Texture2D::create(
+	UploadBatch &upload,
+	const Texture2DDesc &desc,
+	std::span<const std::byte> data
+) {
+	Device &device = upload.device();
 	const size_t expected_size =
 		size_t(desc.width) * desc.height * uploaded_texel_size(desc.format);
 	if(data.size_bytes() != expected_size) {
@@ -55,7 +79,7 @@ Texture2D Texture2D::create(
 		);
 	}
 
-	auto image = texture_detail::create_image(
+	auto image = Image::create(
 		device,
 		ImageDesc{
 			.image_type = VK_IMAGE_TYPE_2D,
@@ -67,12 +91,11 @@ Texture2D Texture2D::create(
 				VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
 				VK_IMAGE_USAGE_TRANSFER_DST_BIT |
 				VK_IMAGE_USAGE_SAMPLED_BIT,
-		},
-		VK_IMAGE_LAYOUT_GENERAL
+		}
 	);
 	const ImageRef ref = image.ref();
 	texture_detail::upload_image(
-		device,
+		upload,
 		ref,
 		{desc.width, desc.height, 1},
 		detail::to_vk_format(desc.format),
@@ -90,11 +113,19 @@ Texture2D Texture2D::create(
 }
 
 Texture2D Texture2D::create(Device &device, const Texture2DDesc &desc) {
+	auto upload = UploadBatch::create(device);
+	auto result = create(upload, desc);
+	upload.submit().wait();
+	return result;
+}
+
+Texture2D Texture2D::create(UploadBatch &upload, const Texture2DDesc &desc) {
+	Device &device = upload.device();
 	const VkImageLayout initial_layout = texture_detail::initial_layout_for(
 		detail::to_vk_format(desc.format)
 	);
 	auto image = texture_detail::create_image(
-		device,
+		upload,
 		ImageDesc{
 			.image_type = VK_IMAGE_TYPE_2D,
 			.view_type = VK_IMAGE_VIEW_TYPE_2D,

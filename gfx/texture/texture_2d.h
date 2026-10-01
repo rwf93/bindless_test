@@ -14,6 +14,7 @@
 namespace gfx {
 
 class Device;
+class UploadBatch;
 
 struct Texture2DDesc {
 	uint32_t width = 0;
@@ -35,13 +36,24 @@ class Texture2D {
 
 public:
 	static Texture2D create(Device &device, const Texture2DDesc &desc);
+	static Texture2D create(UploadBatch &upload, const Texture2DDesc &desc);
 	static Texture2D create(
 		Device &device,
 		const Texture2DDesc &desc,
 		std::span<const std::byte> data
 	);
+	static Texture2D create(
+		UploadBatch &upload,
+		const Texture2DDesc &desc,
+		std::span<const std::byte> data
+	);
 	static Texture2D generate(
 		Device &device,
+		const Texture2DDesc &desc,
+		const std::function<uint32_t(int x, int y)> &function
+	);
+	static Texture2D generate(
+		UploadBatch &upload,
 		const Texture2DDesc &desc,
 		const std::function<uint32_t(int x, int y)> &function
 	);

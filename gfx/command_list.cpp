@@ -23,21 +23,51 @@ void CommandList::set_root_data(
 }
 
 void CommandList::set_pipeline(const Pipeline &pipeline) const {
-	m.device->dispatch().cmdBindPipeline(
-		m.command,
-		m.bind_point,
-		pipeline.native()
-	);
-	const VkDescriptorSet descriptor_set = m.device->descriptor_set();
+	set_pipeline(pipeline.native(), m.bind_point);
+}
+
+void CommandList::set_pipeline(
+	VkPipeline pipeline,
+	VkPipelineBindPoint bind_point
+) const {
+	m.bind_point = bind_point;
+	m.device->dispatch().cmdBindPipeline(m.command, m.bind_point, pipeline);
+	const VkDescriptorSet descriptor_sets[] = {
+		m.device->descriptor_set(),
+		m.device->descriptor_set(),
+	};
 	m.device->dispatch().cmdBindDescriptorSets(
 		m.command,
 		m.bind_point,
 		m.device->pipeline_layout(),
 		0,
-		1,
-		&descriptor_set,
+		2,
+		descriptor_sets,
 		0,
 		nullptr
+	);
+}
+
+void CommandList::trace_rays(
+	const VkStridedDeviceAddressRegionKHR &raygen,
+	const VkStridedDeviceAddressRegionKHR &miss,
+	const VkStridedDeviceAddressRegionKHR &hit,
+	const VkStridedDeviceAddressRegionKHR &callable,
+	uint32_t width,
+	uint32_t height,
+	uint32_t depth
+) const {
+	if(m.bind_point != VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
+		throw std::logic_error("CommandList::trace_rays: ray-tracing pipeline is not bound");
+	m.device->dispatch().cmdTraceRaysKHR(
+		m.command,
+		&raygen,
+		&miss,
+		&hit,
+		&callable,
+		width,
+		height,
+		depth
 	);
 }
 

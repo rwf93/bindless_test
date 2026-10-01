@@ -1,7 +1,6 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
-#include <vk_mem_alloc.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -14,231 +13,111 @@
 #include "gfx/create_utils.h"
 #include "gfx/command_list.h"
 #include "gfx/device.h"
-#include "gfx/vkinfo.h"
-#include "gfx/vktools.h"
+#include "gfx/raw_buffer.h"
+#include "gfx/upload_batch.h"
 
 namespace gfx {
 
 template<typename T>
 class Buffer {
 	struct M {
-		Device *device = nullptr;
-		VmaAllocation allocation = VK_NULL_HANDLE;
-		VkBuffer buffer = VK_NULL_HANDLE;
+		RawBuffer storage;
 		size_t count = 0;
 		uint32_t handle = UINT32_MAX;
 	} m;
 
 	explicit Buffer(M m) : m(std::move(m)) {}
 
-	void destroy() {
-		if(m.buffer != VK_NULL_HANDLE)
-			vmaDestroyBuffer(m.device->allocator(), m.buffer, m.allocation);
-		m = M{};
-	}
-
 public:
-	~Buffer() {
-		destroy();
-	}
-
+	~Buffer() = default;
 	Buffer(const Buffer &) = delete;
 	Buffer &operator=(const Buffer &) = delete;
-
-	Buffer(Buffer &&other) noexcept : m(std::move(other.m)) {
-		other.m = M{};
-	}
-
-	Buffer &operator=(Buffer &&other) noexcept {
-		if(this != &other) {
-			destroy();
-			m = std::move(other.m);
-			other.m = M{};
-		}
-		return *this;
-	}
+	Buffer(Buffer &&) noexcept = default;
+	Buffer &operator=(Buffer &&) noexcept = default;
 
 	static Buffer create(Device &device, std::span<const T> data) {
+		auto upload = UploadBatch::create(device);
+		auto result = create(upload, data);
+		upload.submit().wait();
+		return result;
+	}
+
+	static Buffer create(UploadBatch &upload, std::span<const T> data) {
 		if(data.empty())
 			throw std::invalid_argument("Buffer::create: data must not be empty");
 
+		Device &device = upload.device();
 		const VkDeviceSize size = VkDeviceSize(data.size_bytes());
-		VkBufferCreateInfo buffer_info = {};
-		buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-		buffer_info.size = size;
-		buffer_info.usage =
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-			VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-		buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-		VmaAllocationCreateInfo allocation_info = {};
-		allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-
-		VmaAllocation allocation = VK_NULL_HANDLE;
-		VkBuffer buffer = VK_NULL_HANDLE;
-		VK_CHECK(vmaCreateBuffer(
-			device.allocator(),
-			&buffer_info,
-			&allocation_info,
-			&buffer,
-			&allocation,
-			nullptr
-		));
-
-		const auto staging_allocation_info = info::allocation_create_info();
-		const auto staging_buffer_info = info::buffer_create_info(
-			size,
-			VK_BUFFER_USAGE_TRANSFER_SRC_BIT
-		);
-		VkBuffer staging_buffer = VK_NULL_HANDLE;
-		VmaAllocation staging_allocation = VK_NULL_HANDLE;
-		VK_CHECK(vmaCreateBuffer(
-			device.allocator(),
-			&staging_buffer_info,
-			&staging_allocation_info,
-			&staging_buffer,
-			&staging_allocation,
-			nullptr
-		));
-
-		void *mapped = nullptr;
-		VK_CHECK(vmaMapMemory(device.allocator(), staging_allocation, &mapped));
-		std::memcpy(mapped, data.data(), size_t(size));
-		vmaUnmapMemory(device.allocator(), staging_allocation);
-
-		device.submit_and_wait([&](CommandList &commands) {
-			VkBufferCopy copy_region = {};
-			copy_region.size = size;
-			device.dispatch().cmdCopyBuffer(
-				commands.native(),
-				staging_buffer,
-				buffer,
-				1,
-				&copy_region
-			);
+		auto storage = RawBuffer::create(device, RawBufferDesc{
+			.size = size,
+			.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 		});
-
-		vmaDestroyBuffer(device.allocator(), staging_buffer, staging_allocation);
+		upload.upload(storage, std::as_bytes(data));
+		const uint32_t handle = device.register_storage_buffer(storage.native(), size);
 
 		return Buffer(M{
-			.device = &device,
-			.allocation = allocation,
-			.buffer = buffer,
+			.storage = std::move(storage),
 			.count = data.size(),
-			.handle = device.register_storage_buffer(buffer, size),
+			.handle = handle,
 		});
 	}
 
 	uint32_t handle() const { return m.handle; }
 	size_t count() const { return m.count; }
-	VkBuffer buffer() const { return m.buffer; }
+	VkBuffer buffer() const { return m.storage.native(); }
 	VkDeviceSize size_bytes() const { return VkDeviceSize(sizeof(T)) * m.count; }
 };
 
 template<typename T>
 class SharedBuffer {
 	struct M {
-		Device *device = nullptr;
-		VmaAllocation allocation = VK_NULL_HANDLE;
-		VkBuffer buffer = VK_NULL_HANDLE;
+		RawBuffer storage;
 		size_t count = 0;
 		uint32_t handle = UINT32_MAX;
-		T *mapped = nullptr;
 	} m;
 
 	explicit SharedBuffer(M m) : m(std::move(m)) {}
 
-	void destroy() {
-		if(m.allocation != VK_NULL_HANDLE) {
-			if(m.mapped)
-				vmaUnmapMemory(m.device->allocator(), m.allocation);
-			vmaDestroyBuffer(m.device->allocator(), m.buffer, m.allocation);
-		}
-		m = M{};
-	}
-
 public:
-	~SharedBuffer() {
-		destroy();
-	}
-
+	~SharedBuffer() = default;
 	SharedBuffer(const SharedBuffer &) = delete;
 	SharedBuffer &operator=(const SharedBuffer &) = delete;
-
-	SharedBuffer(SharedBuffer &&other) noexcept : m(std::move(other.m)) {
-		other.m = M{};
-	}
-
-	SharedBuffer &operator=(SharedBuffer &&other) noexcept {
-		if(this != &other) {
-			destroy();
-			m = std::move(other.m);
-			other.m = M{};
-		}
-		return *this;
-	}
+	SharedBuffer(SharedBuffer &&) noexcept = default;
+	SharedBuffer &operator=(SharedBuffer &&) noexcept = default;
 
 	static SharedBuffer create(Device &device, size_t count = 1) {
 		if(count == 0)
 			throw std::invalid_argument("SharedBuffer::create: count must be greater than zero");
 
 		const VkDeviceSize size = VkDeviceSize(sizeof(T)) * count;
-		const auto buffer_info = info::buffer_create_info(
-			size,
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-		);
-
-		VmaAllocationCreateInfo allocation_info = {};
-		allocation_info.usage = VMA_MEMORY_USAGE_AUTO;
-		allocation_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
-		allocation_info.requiredFlags =
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-			VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-
-		VmaAllocation allocation = VK_NULL_HANDLE;
-		VkBuffer buffer = VK_NULL_HANDLE;
-		VK_CHECK(vmaCreateBuffer(
-			device.allocator(),
-			&buffer_info,
-			&allocation_info,
-			&buffer,
-			&allocation,
-			nullptr
-		));
-
-		void *mapped = nullptr;
-		VK_CHECK(vmaMapMemory(device.allocator(), allocation, &mapped));
-		std::memset(mapped, 0, size_t(size));
+		auto storage = RawBuffer::create(device, RawBufferDesc{
+			.size = size,
+			.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			.host_visible = true,
+			.host_coherent = true,
+		});
+		std::memset(storage.data(), 0, size_t(size));
+		const uint32_t handle = device.register_storage_buffer(storage.native(), size);
 
 		return SharedBuffer(M{
-			.device = &device,
-			.allocation = allocation,
-			.buffer = buffer,
+			.storage = std::move(storage),
 			.count = count,
-			.handle = device.register_storage_buffer(buffer, size),
-			.mapped = static_cast<T *>(mapped),
+			.handle = handle,
 		});
 	}
 
 	uint32_t handle() const { return m.handle; }
 	size_t count() const { return m.count; }
-	VkBuffer buffer() const { return m.buffer; }
+	VkBuffer buffer() const { return m.storage.native(); }
 	VkDeviceSize size_bytes() const { return VkDeviceSize(sizeof(T)) * m.count; }
 
-	T *data() { return m.mapped; }
-	const T *data() const { return m.mapped; }
+	T *data() { return static_cast<T *>(m.storage.data()); }
+	const T *data() const { return static_cast<const T *>(m.storage.data()); }
 	T *operator->() { return data(); }
 	const T *operator->() const { return data(); }
 	T &operator[](size_t index) { return data()[index]; }
 	const T &operator[](size_t index) const { return data()[index]; }
-	void invalidate() const {
-		VK_CHECK(vmaInvalidateAllocation(
-			m.device->allocator(),
-			m.allocation,
-			0,
-			VK_WHOLE_SIZE
-		));
-	}
+	void invalidate() const { m.storage.invalidate(); }
 };
 
 // A per-frame set of persistently mapped buffers for frequently updated data.

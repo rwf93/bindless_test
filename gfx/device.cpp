@@ -3,11 +3,13 @@
 
 #include "gfx/device.h"
 
+#include <array>
 #include <stdexcept>
 #include <string>
 
 #include "gfx/command_list.h"
 #include "gfx/image.h"
+#include "gfx/upload_batch.h"
 #include "gfx/vkinfo.h"
 #include "gfx/vktools.h"
 
@@ -86,6 +88,8 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 	VkPhysicalDeviceVulkan12Features features_12 = {};
 	features_12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
 	features_12.descriptorIndexing = VK_TRUE;
+	const bool buffer_device_address = desc.buffer_device_address || desc.ray_tracing;
+	features_12.bufferDeviceAddress = buffer_device_address ? VK_TRUE : VK_FALSE;
 	features_12.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
 	features_12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
 	features_12.descriptorBindingPartiallyBound = VK_TRUE;
@@ -97,12 +101,32 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 	features_12.runtimeDescriptorArray = VK_TRUE;
 	features_12.shaderOutputLayer = desc.graphics ? VK_TRUE : VK_FALSE;
 
+	VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_features = {};
+	acceleration_features.sType =
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+	acceleration_features.accelerationStructure = desc.ray_tracing ? VK_TRUE : VK_FALSE;
+	acceleration_features.descriptorBindingAccelerationStructureUpdateAfterBind =
+		desc.ray_tracing ? VK_TRUE : VK_FALSE;
+
+	VkPhysicalDeviceRayTracingPipelineFeaturesKHR ray_tracing_features = {};
+	ray_tracing_features.sType =
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+	ray_tracing_features.rayTracingPipeline = desc.ray_tracing ? VK_TRUE : VK_FALSE;
+
 	vkb::PhysicalDeviceSelector selector{instance.bootstrap()};
 	selector
 		.set_minimum_version(1, 3)
 		.set_required_features(features)
 		.set_required_features_12(features_12)
 		.set_required_features_13(features_13);
+	if(desc.ray_tracing) {
+		selector
+			.add_required_extension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)
+			.add_required_extension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)
+			.add_required_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)
+			.add_required_extension_features(acceleration_features)
+			.add_required_extension_features(ray_tracing_features);
+	}
 	if(desc.surface != VK_NULL_HANDLE)
 		selector.set_surface(desc.surface);
 	else
@@ -113,6 +137,23 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 		throw std::runtime_error(
 			"gfx::Device::create: " + std::string(physical_result.error().message())
 		);
+	}
+	VkPhysicalDeviceAccelerationStructurePropertiesKHR acceleration_structure_properties = {};
+	VkPhysicalDeviceRayTracingPipelinePropertiesKHR ray_tracing_properties = {};
+	if(desc.ray_tracing) {
+		acceleration_structure_properties.sType =
+			VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
+		ray_tracing_properties.sType =
+			VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+		acceleration_structure_properties.pNext = &ray_tracing_properties;
+		VkPhysicalDeviceProperties2 properties = {};
+		properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+		properties.pNext = &acceleration_structure_properties;
+		instance.dispatch().getPhysicalDeviceProperties2(
+			physical_result.value().physical_device,
+			&properties
+		);
+		acceleration_structure_properties.pNext = nullptr;
 	}
 
 	VkPhysicalDeviceShaderDrawParametersFeatures draw_features = {};
@@ -149,22 +190,6 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 		present_queue = present_result.value();
 	}
 
-	VkCommandPool immediate_pool = VK_NULL_HANDLE;
-	auto pool_info = info::command_pool_create_info(
-		family_result.value(),
-		VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
-	);
-	VK_CHECK(dispatch.createCommandPool(&pool_info, nullptr, &immediate_pool));
-
-	VkCommandBuffer immediate_command = VK_NULL_HANDLE;
-	auto allocate_info = info::command_buffer_allocate_info(immediate_pool);
-	VK_CHECK(dispatch.allocateCommandBuffers(&allocate_info, &immediate_command));
-
-	VkFenceCreateInfo fence_info = {};
-	fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-	VkFence immediate_fence = VK_NULL_HANDLE;
-	VK_CHECK(dispatch.createFence(&fence_info, nullptr, &immediate_fence));
-
 	const uint32_t descriptors_per_type =
 		max_bindless_resources * desc.frames_in_flight;
 	const std::vector<VkDescriptorPoolSize> pool_sizes = {
@@ -174,13 +199,19 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 		{VK_DESCRIPTOR_TYPE_SAMPLER, descriptors_per_type},
 		{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_bindless_resources},
 	};
+	std::vector<VkDescriptorPoolSize> mutable_pool_sizes = pool_sizes;
+	if(desc.ray_tracing)
+		mutable_pool_sizes.push_back({
+			VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
+			descriptors_per_type,
+		});
 	VkDescriptorPoolCreateInfo descriptor_pool_info = {};
 	descriptor_pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 	descriptor_pool_info.flags =
 		VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT_EXT |
 		VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-	descriptor_pool_info.poolSizeCount = uint32_t(pool_sizes.size());
-	descriptor_pool_info.pPoolSizes = pool_sizes.data();
+	descriptor_pool_info.poolSizeCount = uint32_t(mutable_pool_sizes.size());
+	descriptor_pool_info.pPoolSizes = mutable_pool_sizes.data();
 	descriptor_pool_info.maxSets =
 		max_bindless_resources * uint32_t(pool_sizes.size()) * desc.frames_in_flight;
 	VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
@@ -190,7 +221,7 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 		&descriptor_pool
 	));
 
-	VkDescriptorSetLayout descriptor_layout = create_bindless_layout(dispatch, {
+	std::vector<VkDescriptorSetLayoutBinding> descriptor_bindings = {
 		info::descriptor_set_layout_binding(
 			VK_DESCRIPTOR_TYPE_SAMPLER,
 			VK_SHADER_STAGE_ALL,
@@ -215,7 +246,18 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 			7,
 			max_bindless_resources
 		),
-	});
+	};
+	if(desc.ray_tracing)
+		descriptor_bindings.push_back(info::descriptor_set_layout_binding(
+			VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
+			VK_SHADER_STAGE_ALL,
+			8,
+			max_bindless_resources
+		));
+	VkDescriptorSetLayout descriptor_layout = create_bindless_layout(
+		dispatch,
+		std::move(descriptor_bindings)
+	);
 
 	std::vector<VkDescriptorSetLayout> layouts(
 		desc.frames_in_flight,
@@ -246,10 +288,14 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 	VkPushConstantRange push_constants = {};
 	push_constants.stageFlags = VK_SHADER_STAGE_ALL;
 	push_constants.size = 128;
+	const std::array<VkDescriptorSetLayout, 2> pipeline_descriptor_layouts = {
+		descriptor_layout,
+		descriptor_layout,
+	};
 	VkPipelineLayoutCreateInfo pipeline_layout_info = {};
 	pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-	pipeline_layout_info.setLayoutCount = 1;
-	pipeline_layout_info.pSetLayouts = &descriptor_layout;
+	pipeline_layout_info.setLayoutCount = uint32_t(pipeline_descriptor_layouts.size());
+	pipeline_layout_info.pSetLayouts = pipeline_descriptor_layouts.data();
 	pipeline_layout_info.pushConstantRangeCount = 1;
 	pipeline_layout_info.pPushConstantRanges = &push_constants;
 	VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
@@ -283,6 +329,8 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 	vma_functions.vkCmdCopyBuffer = dispatch.fp_vkCmdCopyBuffer;
 
 	VmaAllocatorCreateInfo allocator_info = {};
+	if(buffer_device_address)
+		allocator_info.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 	allocator_info.instance = instance.native();
 	allocator_info.device = device.device;
 	allocator_info.physicalDevice = device.physical_device.physical_device;
@@ -329,9 +377,6 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 		.queue = queue_result.value(),
 		.present_queue = present_queue,
 		.queue_family = family_result.value(),
-		.immediate_pool = immediate_pool,
-		.immediate_command = immediate_command,
-		.immediate_fence = immediate_fence,
 		.descriptor_pool = descriptor_pool,
 		.descriptor_layout = descriptor_layout,
 		.pipeline_layout = pipeline_layout,
@@ -339,6 +384,10 @@ Device Device::create(Instance &instance, const DeviceDesc &desc) {
 		.samplers = std::move(samplers),
 		.frames_in_flight = desc.frames_in_flight,
 		.graphics = desc.graphics,
+		.buffer_device_address = buffer_device_address,
+		.ray_tracing = desc.ray_tracing,
+		.acceleration_structure_properties = acceleration_structure_properties,
+		.ray_tracing_properties = ray_tracing_properties,
 	});
 }
 
@@ -354,10 +403,6 @@ Device::~Device() {
 		m.dispatch.destroyDescriptorPool(m.descriptor_pool, nullptr);
 	if(m.descriptor_layout != VK_NULL_HANDLE)
 		m.dispatch.destroyDescriptorSetLayout(m.descriptor_layout, nullptr);
-	if(m.immediate_fence != VK_NULL_HANDLE)
-		m.dispatch.destroyFence(m.immediate_fence, nullptr);
-	if(m.immediate_pool != VK_NULL_HANDLE)
-		m.dispatch.destroyCommandPool(m.immediate_pool, nullptr);
 	if(m.allocator != VK_NULL_HANDLE)
 		vmaDestroyAllocator(m.allocator);
 	vkb::destroy_device(m.device);
@@ -376,38 +421,10 @@ void Device::wait_idle() {
 void Device::submit_and_wait(
 	const std::function<void(CommandList &)> &record
 ) {
-	VK_CHECK(m.dispatch.resetFences(1, &m.immediate_fence));
-	VK_CHECK(m.dispatch.resetCommandBuffer(m.immediate_command, 0));
-
-	VkCommandBufferBeginInfo begin = {};
-	begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	VK_CHECK(m.dispatch.beginCommandBuffer(m.immediate_command, &begin));
-
-	auto commands = CommandList::create(
-		*this,
-		m.immediate_command,
-		m.graphics
-			? VK_PIPELINE_BIND_POINT_GRAPHICS
-			: VK_PIPELINE_BIND_POINT_COMPUTE
-	);
-	record(commands);
-	VK_CHECK(m.dispatch.endCommandBuffer(m.immediate_command));
-
-	auto command_info = info::command_buffer_submit_info(m.immediate_command);
-	auto submit_info = info::submit_info(&command_info, nullptr, nullptr);
-	VK_CHECK(m.dispatch.queueSubmit2(
-		m.queue,
-		1,
-		&submit_info,
-		m.immediate_fence
-	));
-	VK_CHECK(m.dispatch.waitForFences(
-		1,
-		&m.immediate_fence,
-		VK_TRUE,
-		UINT64_MAX
-	));
+	auto batch = UploadBatch::create(*this);
+	batch.record(record);
+	auto submission = batch.submit();
+	submission.wait();
 }
 
 void Device::update_all_descriptor_sets(const VkWriteDescriptorSet &write) {
@@ -440,6 +457,33 @@ uint32_t Device::register_storage_buffer(
 	write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	write.descriptorCount = 1;
 	write.pBufferInfo = &buffer_info;
+	update_all_descriptor_sets(write);
+	return descriptor_index;
+}
+
+uint32_t Device::register_acceleration_structure(
+	VkAccelerationStructureKHR structure
+) {
+	if(!m.ray_tracing)
+		throw std::runtime_error("gfx: ray tracing was not enabled for this device");
+	if(structure == VK_NULL_HANDLE)
+		throw std::invalid_argument("gfx: cannot register a null acceleration structure");
+	if(m.acceleration_structure_index >= max_bindless_resources)
+		throw std::runtime_error("gfx: bindless acceleration-structure heap exhausted");
+	const uint32_t descriptor_index = m.acceleration_structure_index++;
+
+	VkWriteDescriptorSetAccelerationStructureKHR acceleration_write = {};
+	acceleration_write.sType =
+		VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+	acceleration_write.accelerationStructureCount = 1;
+	acceleration_write.pAccelerationStructures = &structure;
+	VkWriteDescriptorSet write = {};
+	write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	write.pNext = &acceleration_write;
+	write.dstBinding = 8;
+	write.dstArrayElement = descriptor_index;
+	write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+	write.descriptorCount = 1;
 	update_all_descriptor_sets(write);
 	return descriptor_index;
 }

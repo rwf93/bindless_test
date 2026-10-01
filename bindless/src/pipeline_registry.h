@@ -21,21 +21,21 @@ class PipelineRegistry {
 
 	struct M {
 		gfx::Device *device = nullptr;
-		VkFormat swapchain_format = VK_FORMAT_UNDEFINED;
+		gfx::Format swapchain_format = gfx::Format::Undefined;
 		VFS *vfs = nullptr;
 		PipelineMap pipelines;
 	} m;
 
 	static void load_pipeline(
 		gfx::Device &device,
-		VkFormat swapchain_format,
+		gfx::Format swapchain_format,
 		VFS &vfs,
 		const std::filesystem::path &path,
 		PipelineMap &pipelines
 	);
 	static PipelineMap load_all(
 		gfx::Device &device,
-		VkFormat swapchain_format,
+		gfx::Format swapchain_format,
 		VFS &vfs
 	);
 
@@ -50,7 +50,7 @@ public:
 	static PipelineRegistry create(
 		gfx::Device &device,
 		VFS &vfs,
-		VkFormat swapchain_format = VK_FORMAT_UNDEFINED
+		gfx::Format swapchain_format = gfx::Format::Undefined
 	);
 	gfx::Device &device() const { return *m.device; }
 

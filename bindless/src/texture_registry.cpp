@@ -45,10 +45,18 @@ Texture &emplace_named(
 } // namespace
 
 TextureRegistry TextureRegistry::create(gfx::Device &device) {
+	auto upload = gfx::UploadBatch::create(device);
+	auto result = create(upload);
+	upload.submit().wait();
+	return result;
+}
+
+TextureRegistry TextureRegistry::create(gfx::UploadBatch &upload) {
+	gfx::Device &device = upload.device();
 	std::unordered_map<std::string, gfx::Texture2D> builtins;
 	emplace_named(builtins, "missing", "Texture2D", [&] {
 		return gfx::Texture2D::generate(
-			device,
+			upload,
 			gfx::Texture2DDesc{
 				.width = 128,
 				.height = 128,
@@ -64,7 +72,7 @@ TextureRegistry TextureRegistry::create(gfx::Device &device) {
 	});
 	emplace_named(builtins, "black", "Texture2D", [&] {
 		return gfx::Texture2D::generate(
-			device,
+			upload,
 			gfx::Texture2DDesc{
 				.width = 1,
 				.height = 1,
@@ -76,7 +84,7 @@ TextureRegistry TextureRegistry::create(gfx::Device &device) {
 	});
 	emplace_named(builtins, "white", "Texture2D", [&] {
 		return gfx::Texture2D::generate(
-			device,
+			upload,
 			gfx::Texture2DDesc{
 				.width = 1,
 				.height = 1,
@@ -93,35 +101,39 @@ TextureRegistry TextureRegistry::create(gfx::Device &device) {
 }
 
 gfx::Texture2D &TextureRegistry::create_impl(
+	gfx::UploadBatch &upload,
 	std::type_identity<gfx::Texture2D>,
 	const gfx::Texture2DDesc &desc,
 	std::function<uint32_t(int x, int y)> function
 ) {
 	return emplace_named(m.named_2d, desc.name, "Texture2D", [&] {
-		return gfx::Texture2D::generate(*m.device, desc, function);
+		return gfx::Texture2D::generate(upload, desc, function);
 	});
 }
 
 gfx::Texture2D &TextureRegistry::create_impl(
+	gfx::UploadBatch &upload,
 	std::type_identity<gfx::Texture2D>,
 	const gfx::Texture2DDesc &desc,
 	std::span<const std::byte> data
 ) {
 	return emplace_named(m.named_2d, desc.name, "Texture2D", [&] {
-		return gfx::Texture2D::create(*m.device, desc, data);
+		return gfx::Texture2D::create(upload, desc, data);
 	});
 }
 
 gfx::Texture2D &TextureRegistry::create_impl(
+	gfx::UploadBatch &upload,
 	std::type_identity<gfx::Texture2D>,
 	const gfx::Texture2DDesc &desc
 ) {
 	return emplace_named(m.named_2d, desc.name, "Texture2D", [&] {
-		return gfx::Texture2D::create(*m.device, desc);
+		return gfx::Texture2D::create(upload, desc);
 	});
 }
 
 gfx::Texture2DArray &TextureRegistry::create_impl(
+	gfx::UploadBatch &upload,
 	std::type_identity<gfx::Texture2DArray>,
 	const gfx::Texture2DArrayDesc &desc
 ) {
@@ -130,50 +142,55 @@ gfx::Texture2DArray &TextureRegistry::create_impl(
 		desc.name,
 		"Texture2DArray",
 		[&] {
-			return gfx::Texture2DArray::create(*m.device, desc);
+			return gfx::Texture2DArray::create(upload, desc);
 		}
 	);
 }
 
 gfx::Texture3D &TextureRegistry::create_impl(
+	gfx::UploadBatch &upload,
 	std::type_identity<gfx::Texture3D>,
 	const gfx::Texture3DDesc &desc,
 	std::function<uint32_t(int x, int y, int z)> function
 ) {
 	return emplace_named(m.named_3d, desc.name, "Texture3D", [&] {
-		return gfx::Texture3D::generate(*m.device, desc, function);
+		return gfx::Texture3D::generate(upload, desc, function);
 	});
 }
 
 gfx::Texture3D &TextureRegistry::create_impl(
+	gfx::UploadBatch &upload,
 	std::type_identity<gfx::Texture3D>,
 	const gfx::Texture3DDesc &desc,
 	std::span<const std::byte> data
 ) {
 	return emplace_named(m.named_3d, desc.name, "Texture3D", [&] {
-		return gfx::Texture3D::create(*m.device, desc, data);
+		return gfx::Texture3D::create(upload, desc, data);
 	});
 }
 
 gfx::Texture3D &TextureRegistry::create_impl(
+	gfx::UploadBatch &upload,
 	std::type_identity<gfx::Texture3D>,
 	const gfx::Texture3DDesc &desc
 ) {
 	return emplace_named(m.named_3d, desc.name, "Texture3D", [&] {
-		return gfx::Texture3D::create(*m.device, desc);
+		return gfx::Texture3D::create(upload, desc);
 	});
 }
 
 gfx::TextureCube &TextureRegistry::create_impl(
+	gfx::UploadBatch &upload,
 	std::type_identity<gfx::TextureCube>,
 	const gfx::TextureCubeDesc &desc
 ) {
 	return emplace_named(m.named_cubes, desc.name, "TextureCube", [&] {
-		return gfx::TextureCube::create(*m.device, desc);
+		return gfx::TextureCube::create(upload, desc);
 	});
 }
 
 gfx::Texture2D &TextureRegistry::load_2d(
+	gfx::UploadBatch &upload,
 	const std::filesystem::path &path,
 	gfx::TextureColorSpace color_space
 ) {
@@ -185,7 +202,7 @@ gfx::Texture2D &TextureRegistry::load_2d(
 	auto entry = m.cached_2d.try_emplace(
 		key,
 		with_result_of([&] {
-			return gfx::STBTextureLoader::load(*m.device, resolved, color_space);
+			return gfx::STBTextureLoader::load(upload, resolved, color_space);
 		})
 	).first;
 	return entry->second;

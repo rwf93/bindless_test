@@ -21,6 +21,7 @@
 #include "material_registry.h"
 #include "model_data.h"
 #include "vfs.h"
+#include "gfx/upload_batch.h"
 
 namespace {
 
@@ -195,7 +196,8 @@ ModelManifest load_manifest(VFS &vfs, const std::string &path) {
 
 Material *load_material(
 	MaterialRegistry &materials,
-	const std::filesystem::path &path
+	const std::filesystem::path &path,
+	gfx::UploadBatch *upload
 ) {
 	if(!std::filesystem::exists(path)) {
 		throw std::runtime_error(
@@ -203,7 +205,7 @@ Material *load_material(
 		);
 	}
 
-	return &materials.load(path);
+	return upload ? &materials.load(*upload, path) : &materials.load(path);
 }
 
 ModelData load_data(VFS &vfs, const std::string &path) {
@@ -459,19 +461,27 @@ Model GLTFLoader::load(
 	return Model::create(device, load_data(vfs, path));
 }
 
-Model GLTFLoader::load_toml(
+Model GLTFLoader::load(
+	gfx::UploadBatch &upload,
 	VFS &vfs,
-	MaterialRegistry &material_registry,
 	const std::string &path
 ) {
-	const ModelManifest manifest = load_manifest(vfs, path);
-	ModelData data = load_data(vfs, manifest.source.string());
+	return Model::create(upload, load_data(vfs, path));
+}
 
+namespace {
+Model load_toml_impl(
+	gfx::UploadBatch *upload,
+	MaterialRegistry &material_registry,
+	const ModelManifest &manifest,
+	ModelData data
+) {
 	Model::MaterialBindings materials;
 	if(manifest.default_material.has_value()) {
 		materials.default_material = load_material(
 			material_registry,
-			manifest.default_material.value()
+			manifest.default_material.value(),
+			upload
 		);
 	}
 	materials.slots.resize(data.material_slots.size());
@@ -506,7 +516,8 @@ Model GLTFLoader::load_toml(
 		if(!material_path.empty()) {
 			materials.slots[slot_index] = load_material(
 				material_registry,
-				material_path
+				material_path,
+				upload
 			);
 		} else {
 			materials.slots[slot_index] = materials.default_material;
@@ -552,10 +563,39 @@ Model GLTFLoader::load_toml(
 		}
 	}
 
+	const glm::mat4 model_transform = glm::scale(glm::mat4(1.0f), manifest.scale);
+	if(upload)
+		return Model::create(*upload, std::move(data), std::move(materials), model_transform);
 	return Model::create(
 		material_registry.device(),
 		std::move(data),
 		std::move(materials),
-		glm::scale(glm::mat4(1.0f), manifest.scale)
+		model_transform
+	);
+}
+} // namespace
+
+Model GLTFLoader::load_toml(
+	VFS &vfs,
+	MaterialRegistry &material_registry,
+	const std::string &path
+) {
+	const ModelManifest manifest = load_manifest(vfs, path);
+	return load_toml_impl(
+		nullptr, material_registry, manifest,
+		load_data(vfs, manifest.source.string())
+	);
+}
+
+Model GLTFLoader::load_toml(
+	gfx::UploadBatch &upload,
+	VFS &vfs,
+	MaterialRegistry &material_registry,
+	const std::string &path
+) {
+	const ModelManifest manifest = load_manifest(vfs, path);
+	return load_toml_impl(
+		&upload, material_registry, manifest,
+		load_data(vfs, manifest.source.string())
 	);
 }

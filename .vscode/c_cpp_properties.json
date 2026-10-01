@@ -1,10 +1,11 @@
 {
     "configurations": [
         {
-            "name": "Windows MSVC x86-64",
-            "intelliSenseMode": "msvc-x64",
+            "name": "Windows Clang-cl x86-64",
+            "compilerPath": "C:/Program Files/LLVM/bin/clang-cl.exe",
+            "intelliSenseMode": "windows-clang-x64",
             "cStandard": "c23",
-            "cppStandard": "c++23",
+            "cppStandard": "c++26",
             "compileCommands": "${workspaceFolder}/compile_commands.json",
             "browse": {
                 "path": [

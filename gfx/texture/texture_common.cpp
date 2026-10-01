@@ -1,13 +1,13 @@
 #include "gfx/texture/texture_internal.h"
 
-#include <cstring>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "gfx/command_list.h"
 #include "gfx/device.h"
-#include "gfx/vkinfo.h"
-#include "gfx/vktools.h"
+#include "gfx/raw_buffer.h"
+#include "gfx/upload_batch.h"
 
 namespace gfx {
 
@@ -18,13 +18,13 @@ VkImageLayout texture_detail::initial_layout_for(VkFormat format) {
 }
 
 Image texture_detail::create_image(
-	Device &device,
+	UploadBatch &upload,
 	ImageDesc desc,
 	VkImageLayout initial_layout
 ) {
-	auto image = Image::create(device, desc);
+	auto image = Image::create(upload.device(), desc);
 	const ImageRef ref = image.ref();
-	device.submit_and_wait([&](CommandList &commands) {
+	upload.record([&](CommandList &commands) {
 		commands.transition(
 			ref.image,
 			VK_IMAGE_LAYOUT_UNDEFINED,
@@ -36,7 +36,7 @@ Image texture_detail::create_image(
 }
 
 void texture_detail::upload_image(
-	Device &device,
+	UploadBatch &upload,
 	const ImageRef &image,
 	VkExtent3D extent,
 	VkFormat format,
@@ -46,29 +46,22 @@ void texture_detail::upload_image(
 	if(data.empty())
 		throw std::invalid_argument("upload_image: data must not be empty");
 
-	const auto staging_allocation_info = info::allocation_create_info();
-	const auto staging_buffer_info = info::buffer_create_info(
-		VkDeviceSize(data.size_bytes()),
-		VK_BUFFER_USAGE_TRANSFER_SRC_BIT
-	);
-
-	VmaAllocation staging_allocation = VK_NULL_HANDLE;
-	VkBuffer staging_buffer = VK_NULL_HANDLE;
-	VK_CHECK(vmaCreateBuffer(
-		device.allocator(),
-		&staging_buffer_info,
-		&staging_allocation_info,
-		&staging_buffer,
-		&staging_allocation,
-		nullptr
-	));
-
-	void *mapped = nullptr;
-	VK_CHECK(vmaMapMemory(device.allocator(), staging_allocation, &mapped));
-	std::memcpy(mapped, data.data(), data.size_bytes());
-	vmaUnmapMemory(device.allocator(), staging_allocation);
-
-	device.submit_and_wait([&](CommandList &commands) {
+	Device &device = upload.device();
+	auto staging = RawBuffer::create(device, RawBufferDesc{
+		.size = data.size_bytes(),
+		.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		.host_visible = true,
+	});
+	staging.write(data);
+	const VkBuffer staging_buffer = staging.native();
+	upload.hold(std::move(staging));
+	upload.record([&](CommandList &commands) {
+		commands.transition(
+			image.image,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_GENERAL,
+			image_aspect_mask(format)
+		);
 		VkBufferImageCopy copy = {};
 		copy.imageSubresource.aspectMask = image_aspect_mask(format);
 		copy.imageSubresource.mipLevel = 0;
@@ -91,8 +84,6 @@ void texture_detail::upload_image(
 			image_aspect_mask(format)
 		);
 	});
-
-	vmaDestroyBuffer(device.allocator(), staging_buffer, staging_allocation);
 }
 
 void texture_detail::set_debug_name(

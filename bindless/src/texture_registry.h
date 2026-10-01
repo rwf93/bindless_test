@@ -14,6 +14,7 @@
 
 #include "gfx/image_io/stb_texture_loader.h"
 #include "gfx/texture/texture.h"
+#include "gfx/upload_batch.h"
 
 namespace texture_registry_detail {
 template<typename>
@@ -40,43 +41,52 @@ class TextureRegistry {
 	explicit TextureRegistry(M m) : m(std::move(m)) {}
 
 	gfx::Texture2D &create_impl(
+		gfx::UploadBatch &upload,
 		std::type_identity<gfx::Texture2D>,
 		const gfx::Texture2DDesc &desc,
 		std::function<uint32_t(int x, int y)> function
 	);
 	gfx::Texture2D &create_impl(
+		gfx::UploadBatch &upload,
 		std::type_identity<gfx::Texture2D>,
 		const gfx::Texture2DDesc &desc,
 		std::span<const std::byte> data
 	);
 	gfx::Texture2D &create_impl(
+		gfx::UploadBatch &upload,
 		std::type_identity<gfx::Texture2D>,
 		const gfx::Texture2DDesc &desc
 	);
 	gfx::Texture2DArray &create_impl(
+		gfx::UploadBatch &upload,
 		std::type_identity<gfx::Texture2DArray>,
 		const gfx::Texture2DArrayDesc &desc
 	);
 	gfx::Texture3D &create_impl(
+		gfx::UploadBatch &upload,
 		std::type_identity<gfx::Texture3D>,
 		const gfx::Texture3DDesc &desc,
 		std::function<uint32_t(int x, int y, int z)> function
 	);
 	gfx::Texture3D &create_impl(
+		gfx::UploadBatch &upload,
 		std::type_identity<gfx::Texture3D>,
 		const gfx::Texture3DDesc &desc,
 		std::span<const std::byte> data
 	);
 	gfx::Texture3D &create_impl(
+		gfx::UploadBatch &upload,
 		std::type_identity<gfx::Texture3D>,
 		const gfx::Texture3DDesc &desc
 	);
 	gfx::TextureCube &create_impl(
+		gfx::UploadBatch &upload,
 		std::type_identity<gfx::TextureCube>,
 		const gfx::TextureCubeDesc &desc
 	);
 
 	gfx::Texture2D &load_2d(
+		gfx::UploadBatch &upload,
 		const std::filesystem::path &path,
 		gfx::TextureColorSpace color_space
 	);
@@ -90,12 +100,22 @@ public:
 	// Creates a registry with the always-available missing, black, and white
 	// textures already registered.
 	static TextureRegistry create(gfx::Device &device);
+	static TextureRegistry create(gfx::UploadBatch &upload);
 	gfx::Device &device() const { return *m.device; }
 
 	template<typename Texture, typename... Args>
 	Texture &create(Args &&...args) {
+		auto upload = gfx::UploadBatch::create(*m.device);
+		Texture &result = create<Texture>(upload, std::forward<Args>(args)...);
+		upload.submit().wait();
+		return result;
+	}
+
+	template<typename Texture, typename... Args>
+	Texture &create(gfx::UploadBatch &upload, Args &&...args) {
 		if constexpr(texture_registry_detail::supported_type<Texture>) {
 			return create_impl(
+				upload,
 				std::type_identity<Texture>{},
 				std::forward<Args>(args)...
 			);
@@ -112,8 +132,20 @@ public:
 		const std::filesystem::path &path,
 		gfx::TextureColorSpace color_space
 	) {
+		auto upload = gfx::UploadBatch::create(*m.device);
+		Texture &result = load<Texture>(upload, path, color_space);
+		upload.submit().wait();
+		return result;
+	}
+
+	template<typename Texture>
+	Texture &load(
+		gfx::UploadBatch &upload,
+		const std::filesystem::path &path,
+		gfx::TextureColorSpace color_space
+	) {
 		if constexpr(std::is_same_v<Texture, gfx::Texture2D>) {
-			return load_2d(path, color_space);
+			return load_2d(upload, path, color_space);
 		} else {
 			static_assert(
 				texture_registry_detail::unsupported_type<Texture>,

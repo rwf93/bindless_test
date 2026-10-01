@@ -15,6 +15,7 @@
 
 class TextureRegistry;
 namespace gfx {
+class UploadBatch;
 class Texture2D;
 class Texture2DArray;
 class TextureCube;
@@ -58,6 +59,13 @@ public:
 	LightProbe &operator=(const LightProbe &) = delete;
 
 	static LightProbe create(
+		TextureRegistry &textures,
+		const std::string &name,
+		uint32_t resolution = LIGHT_PROBE_DEFAULT_RESOLUTION,
+		uint32_t irradiance_resolution = LIGHT_PROBE_DEFAULT_IRRADIANCE_RESOLUTION
+	);
+	static LightProbe create(
+		gfx::UploadBatch &upload,
 		TextureRegistry &textures,
 		const std::string &name,
 		uint32_t resolution = LIGHT_PROBE_DEFAULT_RESOLUTION,
@@ -132,8 +140,21 @@ public:
 		size_t capacity,
 		uint32_t brdf_resolution = LIGHT_PROBE_DEFAULT_BRDF_RESOLUTION
 	);
+	static LightProbeSet create(
+		gfx::UploadBatch &upload,
+		TextureRegistry &textures,
+		const std::string &name,
+		size_t capacity,
+		uint32_t brdf_resolution = LIGHT_PROBE_DEFAULT_BRDF_RESOLUTION
+	);
 
 	LightProbe &add(
+		const std::string &name,
+		uint32_t resolution = LIGHT_PROBE_DEFAULT_RESOLUTION,
+		uint32_t irradiance_resolution = LIGHT_PROBE_DEFAULT_IRRADIANCE_RESOLUTION
+	);
+	LightProbe &add(
+		gfx::UploadBatch &upload,
 		const std::string &name,
 		uint32_t resolution = LIGHT_PROBE_DEFAULT_RESOLUTION,
 		uint32_t irradiance_resolution = LIGHT_PROBE_DEFAULT_IRRADIANCE_RESOLUTION

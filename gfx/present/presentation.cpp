@@ -85,12 +85,15 @@ Presentation Presentation::create(
 		VK_CHECK(device.dispatch().createSemaphore(
 			&semaphore_info,
 			nullptr,
-			&frames[index].submit
+			&frames[index].acquire
 		));
+	}
+	std::vector<VkSemaphore> render_finished(images.size(), VK_NULL_HANDLE);
+	for(VkSemaphore &semaphore : render_finished) {
 		VK_CHECK(device.dispatch().createSemaphore(
 			&semaphore_info,
 			nullptr,
-			&frames[index].acquire
+			&semaphore
 		));
 	}
 
@@ -107,6 +110,7 @@ Presentation Presentation::create(
 		.image_ids = std::move(image_ids),
 		.command_pool = pool,
 		.frames = std::move(frames),
+		.render_finished = std::move(render_finished),
 	});
 }
 
@@ -117,10 +121,12 @@ Presentation::~Presentation() {
 	for(const Frame &frame : m.frames) {
 		if(frame.fence != VK_NULL_HANDLE)
 			m.device->dispatch().destroyFence(frame.fence, nullptr);
-		if(frame.submit != VK_NULL_HANDLE)
-			m.device->dispatch().destroySemaphore(frame.submit, nullptr);
 		if(frame.acquire != VK_NULL_HANDLE)
 			m.device->dispatch().destroySemaphore(frame.acquire, nullptr);
+	}
+	for(VkSemaphore semaphore : m.render_finished) {
+		if(semaphore != VK_NULL_HANDLE)
+			m.device->dispatch().destroySemaphore(semaphore, nullptr);
 	}
 	if(m.command_pool != VK_NULL_HANDLE)
 		m.device->dispatch().destroyCommandPool(m.command_pool, nullptr);
@@ -166,15 +172,16 @@ void Presentation::end_frame() {
 		throw std::logic_error("gfx::Presentation::end_frame: no frame is recording");
 	Frame &frame = m.frames[m.frame_index];
 	VK_CHECK(m.device->dispatch().endCommandBuffer(frame.command));
+	const VkSemaphore render_finished = m.render_finished.at(m.image_index);
 
 	auto command_info = info::command_buffer_submit_info(frame.command);
 	auto wait_info = info::semaphore_submit_info(
-		VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+		VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 		frame.acquire
 	);
 	auto signal_info = info::semaphore_submit_info(
 		VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-		frame.submit
+		render_finished
 	);
 	auto submit_info = info::submit_info(
 		&command_info,
@@ -193,7 +200,7 @@ void Presentation::end_frame() {
 	present.swapchainCount = 1;
 	present.pSwapchains = &m.swapchain.swapchain;
 	present.waitSemaphoreCount = 1;
-	present.pWaitSemaphores = &frame.submit;
+	present.pWaitSemaphores = &render_finished;
 	present.pImageIndices = &m.image_index;
 	const VkResult presented = m.device->dispatch().queuePresentKHR(
 		m.device->present_queue(),

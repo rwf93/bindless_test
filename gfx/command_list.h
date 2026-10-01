@@ -17,7 +17,7 @@ class CommandList {
 	struct M {
 		Device *device = nullptr;
 		VkCommandBuffer command = VK_NULL_HANDLE;
-		VkPipelineBindPoint bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		mutable VkPipelineBindPoint bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
 	} m;
 
 	explicit CommandList(M m) : m(std::move(m)) {}
@@ -39,6 +39,7 @@ public:
 
 	void set_root_data(const void *data, size_t size) const;
 	void set_pipeline(const Pipeline &pipeline) const;
+	void set_pipeline(VkPipeline pipeline, VkPipelineBindPoint bind_point) const;
 	void draw(
 		uint32_t vertex_count,
 		uint32_t instance_count = 1,
@@ -49,6 +50,15 @@ public:
 		uint32_t group_count_x,
 		uint32_t group_count_y = 1,
 		uint32_t group_count_z = 1
+	) const;
+	void trace_rays(
+		const VkStridedDeviceAddressRegionKHR &raygen,
+		const VkStridedDeviceAddressRegionKHR &miss,
+		const VkStridedDeviceAddressRegionKHR &hit,
+		const VkStridedDeviceAddressRegionKHR &callable,
+		uint32_t width,
+		uint32_t height = 1,
+		uint32_t depth = 1
 	) const;
 	void viewport(uint32_t width, uint32_t height) const;
 	void begin_rendering(const RenderingDesc &rendering) const;
